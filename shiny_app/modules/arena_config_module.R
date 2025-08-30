@@ -189,7 +189,7 @@ arenaConfigUI <- function(id) {
   )
 }
 
-arenaConfigServer <- function(id, values) {
+arenaConfigServer <- function(id, values, parent_session = NULL) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
     
@@ -374,7 +374,11 @@ arenaConfigServer <- function(id, values) {
     
     # Botón para proceder
     observeEvent(input$proceed_to_analysis, {
-      updateTabItems(session = session$parent, "tabs", "analysis")
+      if (!is.null(parent_session)) {
+        shinydashboard::updateTabItems(parent_session, "tabs", "analysis")
+      } else {
+        shinydashboard::updateTabItems(session$parent, "tabs", "analysis")
+      }
     })
   })
 }

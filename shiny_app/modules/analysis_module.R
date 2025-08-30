@@ -188,7 +188,7 @@ analysisUI <- function(id) {
   )
 }
 
-analysisServer <- function(id, values) {
+analysisServer <- function(id, values, parent_session = NULL) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
     
@@ -251,10 +251,42 @@ analysisServer <- function(id, values) {
         
         # Procesar experimento con Rtrack
         add_to_log("Leyendo archivos de experimento...")
+
+        # Copiar los datos para no modificar el original reactivo
+        temp_experiment_data <- values$experiment_data
         
-        # Crear archivo temporal del experimento
-        temp_exp_file <- tempfile(fileext = ".xlsx")
-        writexl::write_xlsx(values$experiment_data, temp_exp_file)
+        # Obtener nombre de arena y quitarle la extensión .txt si la tiene
+        arena_name_from_data <- unique(temp_experiment_data$`_Arena`)[1]
+        arena_name_base <- sub("\\.txt$", "", arena_name_from_data)
+        
+        if (length(unique(temp_experiment_data$`_Arena`)) > 1) {
+          add_to_log("⚠️ Múltiples arenas detectadas. Usando la primera.")
+        }
+        
+        # NO modificar la columna _Arena - mantener el valor original
+        # Rtrack buscará el archivo de arena usando el valor de la columna `_Arena`
+        # y añadiendo la extensión .txt si no la tiene.
+        # Por eso, creamos el archivo con el nombre base.
+        
+        # Crear un directorio temporal para los archivos de análisis
+        temp_dir <- tempfile(pattern = "mwm_analysis_")
+        dir.create(temp_dir)
+        
+        # Crear archivo temporal del experimento en el directorio temporal
+        temp_exp_file <- file.path(temp_dir, "experiment_data.xlsx")
+        writexl::write_xlsx(temp_experiment_data, temp_exp_file)
+        
+        # Crear archivo de arena basado en la configuración del usuario
+        add_to_log("Creando archivo de arena...")
+        
+        # Crear archivo de arena en el mismo directorio temporal
+        arena_file <- create_arena_file(
+          arena_info = values$arena_config,
+          arena_name = arena_name_base, # Usa el nombre base sin extensión
+          output_dir = temp_dir
+        )
+        
+        add_to_log(paste("Archivo de arena creado:", basename(arena_file)))
         
         add_to_log("Procesando tracks con Rtrack...")
         
@@ -262,7 +294,7 @@ analysisServer <- function(id, values) {
         experiment_result <- process_mwm_experiment(
           experiment_file = temp_exp_file,
           data_dir = values$track_files_data$directory,
-          arena_dir = values$arena_files$directory,
+          project_dir = temp_dir,
           threads = threads
         )
         
@@ -378,7 +410,11 @@ analysisServer <- function(id, values) {
     
     # Botón para ver resultados
     observeEvent(input$view_results, {
-      updateTabItems(session = session$parent, "tabs", "results")
+      if (!is.null(parent_session)) {
+        shinydashboard::updateTabItems(parent_session, "tabs", "results")
+      } else {
+        shinydashboard::updateTabItems(session$parent, "tabs", "results")
+      }
     })
   })
 }

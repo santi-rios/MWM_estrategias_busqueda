@@ -1,16 +1,79 @@
 # Funciones auxiliares para procesamiento de datos MWM
 # Contiene las funciones principales para procesar experimentos con Rtrack
 
+# Función auxiliar para crear archivo de arena
+create_arena_file <- function(arena_info, arena_name, output_dir) {
+  
+  # Extraer configuración de arena (estructura anidada del módulo)
+  center_x <- arena_info$arena_bounds$center_x
+  center_y <- arena_info$arena_bounds$center_y
+  radius <- arena_info$arena_bounds$radius
+  
+  # Extraer configuración de objetivo
+  goal_x <- arena_info$goal$center_x
+  goal_y <- arena_info$goal$center_y
+  goal_radius <- arena_info$goal$radius
+  
+  # Crear contenido del archivo de arena siguiendo el formato exacto de Rtrack
+  arena_content <- paste(
+    "type = mwm",
+    "",
+    "time.units = s",
+    "",
+    paste("arena.bounds = circle", center_x, center_y, radius),
+    "",
+    paste("goal = circle", goal_x, goal_y, goal_radius),
+    "",
+    sep = "\n"
+  )
+  
+  # Crear archivo de arena
+  arena_file <- file.path(output_dir, paste0(arena_name, ".txt"))
+  writeLines(arena_content, arena_file)
+  
+  return(arena_file)
+}
+
 # Función principal para procesar experimento MWM
-process_mwm_experiment <- function(experiment_file, data_dir, arena_dir, threads = 0) {
+process_mwm_experiment <- function(experiment_file, data_dir, project_dir = NULL, threads = 0) {
+  
+  # Validaciones de entrada
+  if (is.null(experiment_file) || !file.exists(experiment_file)) {
+    stop("El archivo de experimento no existe: ", experiment_file)
+  }
+  
+  if (is.null(data_dir) || !dir.exists(data_dir)) {
+    stop("El directorio de datos no existe: ", data_dir)
+  }
+  
+  # Si no se especifica project_dir, usar el directorio del archivo de experimento
+  if (is.null(project_dir)) {
+    project_dir <- dirname(experiment_file)
+  }
+  
+  if (!dir.exists(project_dir)) {
+    stop("El directorio del proyecto no existe: ", project_dir)
+  }
+  
+  # Validar threads
+  if (is.null(threads) || length(threads) == 0 || !is.numeric(threads)) {
+    threads <- 0  # Usar valor por defecto
+  }
   
   # Leer experimento con Rtrack
   tryCatch({
+    cat("Procesando experimento con parámetros:\n")
+    cat("  Archivo:", experiment_file, "\n")
+    cat("  Directorio de datos:", data_dir, "\n") 
+    cat("  Directorio del proyecto:", project_dir, "\n")
+    cat("  Hilos:", threads, "\n")
+    
     experiment <- Rtrack::read_experiment(
-      experiment_file,
+      filename = experiment_file,
       data.dir = data_dir,
-      arena.dir = arena_dir,
-      threads = threads
+      project.dir = project_dir,
+      threads = threads,
+      verbose = TRUE
     )
     
     return(experiment)

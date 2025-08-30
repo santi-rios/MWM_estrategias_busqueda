@@ -93,7 +93,7 @@ dataInputUI <- function(id) {
   )
 }
 
-dataInputServer <- function(id, values) {
+dataInputServer <- function(id, values, parent_session = NULL) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
     
@@ -106,8 +106,20 @@ dataInputServer <- function(id, values) {
       req(input$experiment_file)
       
       tryCatch({
+        # Verificar que el archivo existe
+        if (!file.exists(input$experiment_file$datapath)) {
+          showNotification("Error: El archivo no se pudo cargar correctamente", type = "error")
+          return()
+        }
+        
         # Leer el archivo Excel
         exp_data <- readxl::read_excel(input$experiment_file$datapath)
+        
+        # Verificar que se leyeron datos
+        if (nrow(exp_data) == 0) {
+          showNotification("Error: El archivo está vacío", type = "error")
+          return()
+        }
         
         # Validar columnas requeridas
         required_cols <- c("_TrackID", "_TargetID", "_Day", "_Trial", 
@@ -263,7 +275,11 @@ dataInputServer <- function(id, values) {
     
     # Botón para proceder
     observeEvent(input$proceed_to_arena, {
-      updateTabItems(session = session$parent, "tabs", "arena_config")
+      if (!is.null(parent_session)) {
+        shinydashboard::updateTabItems(parent_session, "tabs", "arena_config")
+      } else {
+        shinydashboard::updateTabItems(session$parent, "tabs", "arena_config")
+      }
     })
   })
 }

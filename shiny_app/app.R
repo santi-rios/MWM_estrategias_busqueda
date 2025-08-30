@@ -36,6 +36,7 @@ ui <- dashboardPage(
   dashboardSidebar(
     width = 250,
     sidebarMenu(
+      id = "tabs",
       menuItem("📁 Cargar Datos", tabName = "data_input", icon = icon("upload")),
       menuItem("🎯 Configurar Arena", tabName = "arena_config", icon = icon("bullseye")),
       menuItem("⚙️ Procesar Análisis", tabName = "analysis", icon = icon("cogs")),
@@ -164,10 +165,10 @@ server <- function(input, output, session) {
   )
   
   # Llamar a los módulos del servidor
-  dataInputServer("data_input", values)
-  arenaConfigServer("arena_config", values)
-  analysisServer("analysis", values)
-  resultsServer("results", values)
+  dataInputServer("data_input", values, session)
+  arenaConfigServer("arena_config", values, session)
+  analysisServer("analysis", values, session)
+  resultsServer("results", values, session)
   
   # Descargas
   output$downloadResults <- downloadHandler(
@@ -193,7 +194,7 @@ server <- function(input, output, session) {
         write.csv(values$processed_data, file.path(temp_dir, "processed_data.csv"), row.names = FALSE)
       }
       
-      # Crear el ZIP
+  # Crear el ZIP
       zip(file, list.files(temp_dir, full.names = TRUE))
     }
   )

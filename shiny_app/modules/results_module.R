@@ -260,7 +260,7 @@ resultsUI <- function(id) {
   )
 }
 
-resultsServer <- function(id, values) {
+resultsServer <- function(id, values, parent_session = NULL) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
     
@@ -309,7 +309,7 @@ resultsServer <- function(id, values) {
       req(values$processed_data, input$density_grouping, input$density_days)
       
       tryCatch({
-        showNotification("Generando mapas de densidad...", type = "message")
+        showNotification("Generando mapas de densidad...", type = "default")
         
         # Crear mapas de densidad agrupados
         plots <- create_density_maps(
@@ -337,7 +337,7 @@ resultsServer <- function(id, values) {
       req(values$strategies, input$strategy_grouping, input$strategy_days)
       
       tryCatch({
-        showNotification("Generando análisis de estrategias...", type = "message")
+        showNotification("Generando análisis de estrategias...", type = "default")
         
         # Crear análisis de estrategias
         results <- create_strategy_analysis(

@@ -27,7 +27,10 @@ MWM_estrategias_busqueda/
 ├── simple_analysis.R             # Script simplificado (sin interfaz)
 ├── check_dependencies.R          # Verificador de dependencias (MEJORADO)
 ├── start_here.R                  # Guía interactiva de inicio
-├── data/example/                 # Datos de ejemplo
+├── data/                         # Datos para pruebas
+│   ├── example/                  # Datos básicos de ejemplo
+│   ├── test_dataset/             # Conjunto completo para pruebas
+│   └── README.md                 # Documentación de los datos
 ├── ejemplo.qmd                   # Documentación metodológica
 └── README.md                     # Este archivo
 ```

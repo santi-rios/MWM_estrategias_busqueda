@@ -1,0 +1,745 @@
+---
+format: html
+---
+
+## Preparing the input files
+
+### Arena descriptions
+
+An ‘arena’ is a unique combination of a ‘pool’ (or the equivalent for virtual tasks) and the goals—including the goal positions. This means that any change in layout of the arena, or a goal reversal or probe trial, needs to be defined separately in its own arena description file. The description files are simple and consist of only 4–5 lines:
+
+    The arena type. For a water maze experiment, this will always be mwm
+    The time units. The units in which the timestamps are measured. Each x,y coordinate pair in the path data is associated with a timestamp. The frequency of measurement may be in the range of milliseconds, seconds, hours or even days—depending on the type of experiment. This can either be a text code (‘s’ = seconds, ‘h’ = hours etc.)1 or a conversion factor to seconds (1 = seconds, 0.0002777778 = hours (a second is 1/3600 of an hour) etc.).
+    The bounds of the arena (i.e. the pool dimensions). This line has four components, each is separated by a space.
+        The shape. For the Morris water maze, only circle is allowed.
+        The x coordinate of the arena centre.
+        The y coordinate of the arena centre.
+        The radius of the pool.
+    The goal dimensions. Shape, centre x, centre y, radius.
+    The dimensions of the old goal. Shape, centre x, centre y, radius. This is only for reversal trials and does not need to be defined for acquisition trials.
+
+The units for the x and y coordinates do not need to be specified, but these must be the same units used in the raw track files.
+
+For example, the arena description for the example file (‘Arena_SW.txt’) is:
+
+```txt
+type = mwm
+time.units = s
+arena.bounds = circle 133.655 103.5381 95
+goal = circle 121.8934 154.6834 10
+```
+
+::: {.callout-note}
+
+Here it would be good to let the user choose the .txt values for accessibility. 
+
+ALSO, the best option would be to load a frame from one video (optional) and let the user select the center and the bound with a click and automatically extracting all the values and saving them to the txt file
+
+:::
+
+## Assembling the experiment description
+
+The key task before analysing an experiment is to gather together all the information you need for the analysis. This is always necessary for any analysis, and is always a nasty task. Nevertheless, Rtrack uses a straightforward spreadsheet format to make this task less tedious and less confusing.
+
+Several columns are required, these all must begin with an underscore ’_’:
+
+    _TrackID is a unique identifier for each track. The easiest way to do this is just write “Track_1” in the first cell and drag to fill the whole column using Excel’s autofill feature.
+    _TargetID is a unique identifier for each subject. Here you should put the animal ID tags, blinded patient IDs or whatever identifies the subjects.
+    _Day indicates the day of the experiment. Ideally, use numbers (e.g. 1 for the first experimental day).
+    _Trial indicates the trial number. Typically there will be multiple trials per day, but this is not necessary. The field is still required even if a one-trial-per-day paradigm is used.
+    _Arena is the name of the arena description file that applies to this track. This is a file path and is relative to the project directory (which is defined by project.dir in the read_experiment function). See the note on relative paths below.
+    _TrackFile is the name of the arena description file that applies to this track. This is also a file path and is relative to the data directory (which is defined by data.dir in the read_experiment function). See the note on relative paths below.
+    _TrackFileFormat is the format in which the raw track data is stored. See the package documentation (run ?Rtrack::identify_track_format) for a list of the supported file formats.
+
+
+::: {.callout-note}
+
+Here also we could use the file info to automatically populate and create this experiment description file. For this, we could use the file names of the experiments, which can easily be exported to look like this: 'experiment_1_arenaname_ID_1_treatment_day_1_trial_1.csv'.
+
+:::
+
+
+### Custom track formats
+
+We have built in support for several ‘raw’ track formats, which you may be able to use if your tracks are not automatically recognised.
+raw.csv, raw.csv2, raw.tab
+
+These are plain text files with columns of data separated by tabs (raw.tab), commas (raw.csv) or semicolons (raw.csv2). Three columns must be provided, named “Time”, “X” and “Y” (in any order)1, which contain the timestamp, the x coordinates and the y coordinates respectively2. All columns must contain only numeric data. For the raw.csv2 format, decimal commas are used—the other two formats require decimal points.
+Time 	X 	Y
+0 	21.0 	110
+0.1 	21.4 	111
+0.2 	21.8 	112 
+
+
+If you are using a custom track format, please be aware that Rtrack considers coordinates to be in the standard plotting orientation, that is: 0 is on the bottom of the y-axis. This may be different from your data if your video capture software reports 0 to be at the top of the y-axis (as is standard with video formats). You will need to flip the y-axis coordinates in this case.
+
+You can also add any other columns of factors. In the example the mouse strain has been included as well as whether the track was for a probe trial or not. The ‘Probe’ column is a bit special as it can be used to easily filter out probe trials from some plots. If you have probe trials and wish to use this feature, just add the column as shown in the example (‘Probe’ with a capital ‘P’ and values of ‘TRUE’ or ‘FALSE’ only).
+
+::: {.callout-note}
+Also, we could add columns to the individual tracks (instead of in the file names) in order to easily populate the experiment description file
+:::
+
+## Process a single track
+
+Reading in data
+
+Look at one track to get a feel for the workflow. Firstly an arena definition must be read in. This might be different for different acquisition days. The arena is also differently defined for goal reversal trials. This object has the class ‘arena’.
+
+```r
+arena = Rtrack::read_arena("MWM_example/Arena_SW.txt")
+```
+
+There are many different raw data formats. The format of the data files depends on the software they were recorded with, the locale and (sometimes) the computer system they were recorded with. Each format supported by Rtrack has a code, which must be given to the read_path function. Run the function identify_track_format with one of the raw track files to help you determine the appropriate format code for your data.
+
+```r
+track.format = Rtrack::identify_track_format("MWM_example/Data/Track_1.csv")
+#> ✔ This track seems to be in the format 'ethovision.3.csv'.
+```
+
+The tracks for the example are in the format ethovision.3.csv, we need to pass this information on to the reader function. The arena is also required for reading in the path (to provide calibration information).
+
+```r
+path = Rtrack::read_path("MWM_example/Data/Track_1.csv", arena, id = "test",
+    track.format = "ethovision.3.csv")
+```
+
+Extracting path metrics
+
+The track path/swim path (of class rtrack_path) can now be used to collect a range of metrics. This results in a list of various secondary variables which can be used for plotting and strategy calling.
+
+```r
+metrics = Rtrack::calculate_metrics(path, arena)
+```
+
+## Plotting a density heatmap
+
+Paths can also be plotted as a density heatmap.
+
+```r
+Rtrack::plot_density(metrics)
+```
+
+Feel free to play with the colours (just please don’t use a garish ‘rainbow’ scheme). The colour scales are best defined using the ‘colorRampPalette’ function.
+
+```r
+Rtrack::plot_density(metrics, col = colorRampPalette(c("yellow", "orange", "red"))(256))
+```
+
+You can use any of the colour definitions provided in R, and reducing the number of colours in the palette gives a contour effect.
+
+```r
+Rtrack::plot_density(metrics, col = colorRampPalette(c(rgb(1, 1, 0.2), "orange",
+    "#703E3E"))(8))
+```
+
+Calling the strategy
+
+The search strategy can be called using the rtrack_metrics object. For more information on spatial search strategies and the strategies defined in Rtrack, see the associated strategy description page. The default method uses a random forest model trained on several thousands of expert-called search paths.
+
+```r
+strategy = Rtrack::call_strategy(metrics)
+```
+
+The resulting rtrack_strategy object contains various information; the actual strategy call can be found in the calls component. A confidence score is an indicator of how well the path fit the model (1 = perfect).
+
+```r
+strategy$calls
+#>   strategy     name confidence          1          2         3         4
+#> 1        4 scanning  0.4446154 0.04615385 0.08769231 0.3107692 0.4446154
+#>            5          6 7 8          9
+#> 1 0.07846154 0.02153846 0 0 0.01076923
+```
+
+## Bulk process an experiment
+
+Reading in experiment data and metadata
+
+The experiment information is read in using metadata in a spreadsheet. See ‘Preparing the input files’ above for details on how to properly construct this file. The raw data are read in, metrics calculated and returned in a list object of class rtrack_experiment. This is the most processor-intensive part of the workflow and an experiment will typically consist of many hundreds of tracks. Depending on the size of the experiment and the speed of your computer, this step may take several minutes (a friendly progress bar will let you know if there is time for a coffee at this step).
+
+```r
+experiment = Rtrack::read_experiment("MWM_example/Experiment.xlsx", data.dir = "MWM_example/Data")
+#>     Processing tracks.
+```
+
+Parallel processing
+
+It is trivial to parallelise this potentially time-consuming step (if perhaps you have run out of coffee). Now try running the read_experiment code again and see if this makes a difference in processing time.
+
+```r
+experiment = Rtrack::read_experiment("MWM_example/Experiment.xlsx", data.dir = "MWM_example/Data",
+    threads = 0)
+```
+
+Bulk strategy calling
+
+The strategies can then be called for each track. The strategy-calling methods also take lists of rtrack_metrics objects, or even the whole rtrack_experiment object.. The core strategy-calling method employs vectorised code and is quite fast.
+
+```r
+strategies = Rtrack::call_strategy(experiment)
+```
+
+The resulting rtrack_strategy object contains, among other information, all the strategy calls combined in a data.frame.
+
+```r
+head(strategies$calls)
+#>         strategy            name confidence           1           2           3
+#> Track_1        4        scanning  0.4446154 0.046153846 0.087692308 0.310769231
+#> Track_2        6 directed search  0.4938462 0.000000000 0.001538462 0.000000000
+#> Track_3        4        scanning  0.4661538 0.049230769 0.066153846 0.238461538
+#> Track_4        1     thigmotaxis  0.6430769 0.643076923 0.032307692 0.196923077
+#> Track_5        6 directed search  0.6815385 0.000000000 0.007692308 0.003076923
+#> Track_6        6 directed search  0.7415385 0.001538462 0.018461538 0.000000000
+#>                   4           5          6           7           8           9
+#> Track_1 0.444615385 0.078461538 0.02153846 0.000000000 0.000000000 0.010769231
+#> Track_2 0.009230769 0.006153846 0.49384615 0.418461538 0.067692308 0.003076923
+#> Track_3 0.466153846 0.100000000 0.05846154 0.001538462 0.000000000 0.020000000
+#> Track_4 0.120000000 0.007692308 0.00000000 0.000000000 0.000000000 0.000000000
+#> Track_5 0.073846154 0.033846154 0.68153846 0.196923077 0.003076923 0.000000000
+#> Track_6 0.112307692 0.052307692 0.74153846 0.067692308 0.001538462 0.004615385
+```
+
+Bulk density maps
+
+It is also possible to create a density heatmap for many tracks together.
+
+```r
+Rtrack::plot_density(experiment$metrics)
+#> Warning in Rtrack::plot_density(experiment$metrics): Multiple arena definitions
+#> have been used. A merged plot may not make sense.
+```
+
+The warning tells us that there are data from tracks using different arenas in our ‘metrics’ list. This almost certainly does not make sense.
+
+However, it might be interesting to look at all the reversal tracks and compare this between the different strains
+
+```r
+b6.reversal.metrics = experiment$metrics[experiment$factors$Strain == "B6" &
+    (experiment$factors$`_Day` == 4 | experiment$factors$`_Day` == 5)]
+d2.reversal.metrics = experiment$metrics[experiment$factors$Strain == "D2" &
+    (experiment$factors$`_Day` == 4 | experiment$factors$`_Day` == 5)]
+par(mfrow = c(1, 2))
+Rtrack::plot_density(b6.reversal.metrics, title = "B6 reversal")
+Rtrack::plot_density(d2.reversal.metrics, title = "D2 reversal")
+
+par(mfrow = c(1, 1))
+
+# Plot  
+```
+
+## Example
+
+::: {callout-note}
+Please look at an example of how I created the main plots of this worflow (heat plots) and modeled the strategies extracted from the rtrack package:
+:::
+
+
+
+
+```r
+load("./scripts/final_experiment.RData")
+
+estrategias_rtrack <- Rtrack::call_strategy(rtrack_experimento)
+
+
+# ---- P1
+flx_p1_metrics <-
+    rtrack_experimento$metrics[rtrack_experimento$factors$Tratamiento == "Flx" &
+        (rtrack_experimento$factors$`_Day` == 5)]
+# Flx-CUMS
+flx_CUMS_p1_metrics <-
+    rtrack_experimento$metrics[rtrack_experimento$factors$Tratamiento == "Flx-CUMS" &
+        (rtrack_experimento$factors$`_Day` == 5)]
+# Sal-CUMS-F
+sal_cums_f_p1_metrics <-
+    rtrack_experimento$metrics[rtrack_experimento$factors$Tratamiento == "Sal-CUMS-F" &
+        (rtrack_experimento$factors$`_Day` == 5)]
+# Ket-CUMS
+ket_cums_p1_metrics <-
+    rtrack_experimento$metrics[rtrack_experimento$factors$Tratamiento == "Ket-CUMS" &
+        (rtrack_experimento$factors$`_Day` == 5)]
+# Sal-CUMS-K
+sal_cums_k_p1_metrics <-
+    rtrack_experimento$metrics[rtrack_experimento$factors$Tratamiento == "Sal-CUMS-K" &
+        (rtrack_experimento$factors$`_Day` == 5)]
+
+
+
+
+# ---- P2
+flx_p2_metrics <-
+    rtrack_experimento$metrics[rtrack_experimento$factors$Tratamiento == "Flx" &
+        (rtrack_experimento$factors$`_Day` == 6)]
+# Flx-CUMS
+flx_CUMS_p2_metrics <-
+    rtrack_experimento$metrics[rtrack_experimento$factors$Tratamiento == "Flx-CUMS" &
+        (rtrack_experimento$factors$`_Day` == 6)]
+# Sal-CUMS-F
+sal_cums_f_p2_metrics <-
+    rtrack_experimento$metrics[rtrack_experimento$factors$Tratamiento == "Sal-CUMS-F" &
+        (rtrack_experimento$factors$`_Day` == 6)]
+# Ket-CUMS
+ket_cums_p2_metrics <-
+    rtrack_experimento$metrics[rtrack_experimento$factors$Tratamiento == "Ket-CUMS" &
+        (rtrack_experimento$factors$`_Day` == 6)]
+# Sal-CUMS-K
+sal_cums_k_p2_metrics <-
+    rtrack_experimento$metrics[rtrack_experimento$factors$Tratamiento == "Sal-CUMS-K" &
+        (rtrack_experimento$factors$`_Day` == 6)]
+
+
+# ---- P-Rev
+
+flx_rev_metrics <-
+    rtrack_experimento$metrics[rtrack_experimento$factors$Tratamiento == "Flx" &
+        (rtrack_experimento$factors$`_Day` == 9)]
+# Flx-CUMS
+flx_CUMS_rev_metrics <-
+    rtrack_experimento$metrics[rtrack_experimento$factors$Tratamiento == "Flx-CUMS" &
+        (rtrack_experimento$factors$`_Day` == 9)]
+# Sal-CUMS-F
+sal_cums_f_rev_metrics <-
+    rtrack_experimento$metrics[rtrack_experimento$factors$Tratamiento == "Sal-CUMS-F" &
+        (rtrack_experimento$factors$`_Day` == 9)]
+# Ket-CUMS
+ket_cums_rev_metrics <-
+    rtrack_experimento$metrics[rtrack_experimento$factors$Tratamiento == "Ket-CUMS" &
+        (rtrack_experimento$factors$`_Day` == 9)]
+# Sal-CUMS-K
+sal_cums_k_rev_metrics <-
+    rtrack_experimento$metrics[rtrack_experimento$factors$Tratamiento == "Sal-CUMS-K" &
+        (rtrack_experimento$factors$`_Day` == 9)]
+
+
+
+######## MAPAS de CALOR
+Rtrack::plot_density(
+  flx_p1_metrics,
+  title = "FLX P-1",
+  col = viridis(300), # 738
+  resolution = 900,
+  feature.col = "#E87FB0",
+  feature.lwd = 4,
+  legend = F
+)
+
+
+Rtrack::plot_density(
+  flx_p2_metrics,
+  title = "FLX P-2",
+  col = viridis(300), # 738
+  resolution = 900,
+  feature.col = "#E87FB0",
+  feature.lwd = 4,
+  legend = F
+)
+
+Rtrack::plot_density(
+  flx_rev_metrics,
+  title = "FLX Reversa",
+  col = viridis(300), # 738
+  resolution = 900,
+  feature.col = "#E87FB0",
+  feature.lwd = 4,
+  legend = F
+)
+
+Rtrack::plot_density(
+  flx_CUMS_p1_metrics,
+  title = "FLX-CUMS P-1",
+  col = viridis(300), # 738
+  resolution = 900,
+  feature.col = "#E87FB0",
+  feature.lwd = 4,
+  legend = F
+)
+
+
+Rtrack::plot_density(
+  flx_CUMS_p2_metrics,
+  title = "FLX-CUMS P-2",
+  col = viridis(300), # 738
+  resolution = 900,
+  feature.col = "#E87FB0",
+  feature.lwd = 4,
+  legend = F
+)
+
+Rtrack::plot_density(
+  flx_CUMS_rev_metrics,
+  title = "Flx-CUMS Reversa",
+  col = viridis(300), # 738
+  resolution = 900,
+  feature.col = "#E87FB0",
+  feature.lwd = 4,
+  legend = F
+)
+
+Rtrack::plot_density(
+  sal_cums_f_p1_metrics,
+  title = "Sal-CUMS-FLX P1",
+  col = viridis(300), # 738
+  resolution = 900,
+  feature.col = "#E87FB0",
+  feature.lwd = 4,
+  legend = F
+)
+
+Rtrack::plot_density(
+  sal_cums_f_p2_metrics,
+  title = "Sal-CUMS-FLX P-2",
+  col = viridis(300), # 738
+  resolution = 900,
+  feature.col = "#E87FB0",
+  feature.lwd = 4,
+  legend = F
+)
+
+Rtrack::plot_density(
+  sal_cums_f_rev_metrics,
+  title = "Sal-CUMS-F Reversa",
+  col = viridis(300), # 738
+  resolution = 900,
+  feature.col = "#E87FB0",
+  feature.lwd = 4,
+  legend = F
+)
+```
+
+
+
+```r dfestrategia
+# library(dplyr)
+
+# Helper function to load data from multiple file paths
+load_data <- function(paths) {
+  for (path in paths) {
+    if (file.exists(path)) {
+      return(read.csv(path))
+    }
+  }
+  stop("CSV file not found in the specified paths.")
+}
+
+# Helper function to recode data
+recode_estrategias <- function(df) {
+  df %>%
+    mutate(
+      Tratamiento.Farm = case_when(
+        tratamiento %in% c("Flx", "Flx-CUMS") ~ "Fluoxetina",
+        tratamiento %in% c("Sal-CUMS-F", "Salina-Control") ~ "Salina"
+      ),
+      Estres = case_when(
+        tratamiento %in% c("Flx-CUMS", "Sal-CUMS-F") ~ "CUMS",
+        tratamiento %in% c("Flx", "Salina-Control") ~ "Control"
+      ),
+      estrategias_hipo = forcats::fct_recode(as.factor(estrategias_hipo), 
+        "Alocéntricas" = "hipocampo_dependientes",
+        "Egocéntricas" = "hipocampo_independientes",
+        "Perseverancia" = "perseverancia"
+    ),
+      Tratamiento.Farm = factor(Tratamiento.Farm, levels = c("Salina", "Fluoxetina"))
+    )
+}
+
+# File paths for pre and post data
+file_paths_pre <- c("../data/estrategias_pre_good_juntos.csv", "./data/estrategias_pre_good_juntos.csv")
+file_paths_post <- c("../data/estrategias_post_juntos.csv", "./data/estrategias_post_juntos.csv")
+
+# Load and recode pre data
+estrategias_df_pre <- load_data(file_paths_pre) %>%
+  recode_estrategias()
+
+# Load and recode post data
+estrategias_df_post <- load_data(file_paths_post) %>%
+  recode_estrategias()
+
+```
+
+::: {.callout-note}
+for the strategies, we get have this info:
+
+```r
+r$> str(estrategias_rtrack)
+List of 9
+ $ method          : chr "rtrack"
+ $ model           : chr "mwm_rf_v7"
+ $ parameters      : NULL
+ $ strategy.names  : Named chr [1:9] "thigmotaxis" "circling" "random path" "scanning" ...
+  ..- attr(*, "names")= chr [1:9] "1" "2" "3" "4" ...
+ $ strategy.colours: Named chr [1:9] "#703E3E" "#B77727" "#FFB010" "#FFCF08" ...
+  ..- attr(*, "names")= chr [1:9] "1" "2" "3" "4" ...
+ $ plot.order      : num [1:9] 8 7 6 5 4 3 2 1 9
+ $ tracks          : chr [1:1206] "15" "16" "17" "18" ...
+ $ calls           :'data.frame':       1206 obs. of  12 variables:
+  ..$ strategy  : num [1:1206] 1 1 4 4 4 4 6 4 3 4 ...
+  ..$ name      : chr [1:1206] "thigmotaxis" "thigmotaxis" "scanning" "scanning" ...
+  ..$ confidence: num [1:1206] 0.383 0.308 0.352 0.391 0.383 ...
+  ..$ 1         : num [1:1206] 0.3831 0.3077 0.0169 0.0277 0.0569 ...
+  ..$ 2         : num [1:1206] 0.0385 0.0523 0.0154 0.0508 0.0354 ...
+  ..$ 3         : num [1:1206] 0.1969 0.1831 0.0462 0.1323 0.2215 ...
+  ..$ 4         : num [1:1206] 0.163 0.275 0.352 0.391 0.383 ...
+  ..$ 5         : num [1:1206] 0.148 0.135 0.218 0.275 0.223 ...
+  ..$ 6         : num [1:1206] 0.0646 0.04 0.3292 0.1154 0.0554 ...
+  ..$ 7         : num [1:1206] 0.00308 0.00154 0.01538 0.00154 0.00308 ...
+  ..$ 8         : num [1:1206] 0 0 0 0 0 ...
+  ..$ 9         : num [1:1206] 0.00308 0.00462 0.00615 0.00615 0.02154 ...
+ $ thresholded     : logi FALSE
+ - attr(*, "class")= chr "rtrack_strategies"
+r$> head(estrategias_rtrack$calls)
+   strategy        name confidence          1          2          3         4         5
+15        1 thigmotaxis  0.3830769 0.38307692 0.03846154 0.19692308 0.1630769 0.1476923
+16        1 thigmotaxis  0.3076923 0.30769231 0.05230769 0.18307692 0.2753846 0.1353846
+17        4    scanning  0.3523077 0.01692308 0.01538462 0.04615385 0.3523077 0.2184615
+18        4    scanning  0.3907692 0.02769231 0.05076923 0.13230769 0.3907692 0.2753846
+19        4    scanning  0.3830769 0.05692308 0.03538462 0.22153846 0.3830769 0.2230769
+20        4    scanning  0.4569231 0.07076923 0.05384615 0.18461538 0.4569231 0.1738462
+            6           7 8           9
+15 0.06461538 0.003076923 0 0.003076923
+16 0.04000000 0.001538462 0 0.004615385
+17 0.32923077 0.015384615 0 0.006153846
+18 0.11538462 0.001538462 0 0.006153846
+19 0.05538462 0.003076923 0 0.021538462
+20 0.03384615 0.000000000 0 0.026153846
+r$> estrategias_rtrack$strategy.names
+                1                 2                 3                 4                 5 
+    "thigmotaxis"        "circling"     "random path"        "scanning"        "chaining" 
+                6                 7                 8                 9 
+"directed search"  "corrected path"     "direct path"    "perseverance"
+```
+
+Where we need to divide the strategies into:
+
+- Egocentric: Thigmotaxis, Circling, Random, Scanning, Chaining
+- Allocentric:  Goal-directed search, Corrected path, Direct path, Perseverance
+
+Also, there  is a way to threshold the strategies, we could use this in some part of the analysis to easily threshold and see the results:
+
+Thresholding call confidence
+
+The machine-learning algorithm (call_strategy) never outputs a 0 or ‘unknown’ call. It will always assign a call based on the best match to the model. Sometimes these ‘best matches’ are actually rather poor. It may be of interest to use a confidence threshold and discard calls that are below a certain value. We have observed during testing that confidence scores above 0.4 are typically accurate and reproducible, but some paths may not reach this level. It is possible to perform the thresholding easily using the threshold_strategies function.
+
+The thresholded experiment is a new rtrack_experiment object and contains all the same components. The following example uses a confidence threshold of 0.4 and checks the size of the resulting data.frame of strategy calls.
+
+```r
+dim(Rtrack::threshold_strategies(strategies, 0.4)$calls)
+#> [1] 243  12
+```
+
+It can be seen that only 205 tracks remain at this threshold.
+
+:::
+
+
+Then for the statisticall analysis of the strategies, I did something like this:
+
+
+```r dfestrategias
+# library(dplyr)
+
+# Helper function to load data from multiple file paths
+load_data <- function(paths) {
+  for (path in paths) {
+    if (file.exists(path)) {
+      return(read.csv(path))
+    }
+  }
+  stop("CSV file not found in the specified paths.")
+}
+
+# Helper function to recode data
+recode_estrategias <- function(df) {
+  df %>%
+    mutate(
+      Tratamiento.Farm = case_when(
+        tratamiento %in% c("Flx", "Flx-CUMS") ~ "Fluoxetina",
+        tratamiento %in% c("Sal-CUMS-F", "Salina-Control") ~ "Salina"
+      ),
+      Estres = case_when(
+        tratamiento %in% c("Flx-CUMS", "Sal-CUMS-F") ~ "CUMS",
+        tratamiento %in% c("Flx", "Salina-Control") ~ "Control"
+      ),
+      estrategias_hipo = forcats::fct_recode(as.factor(estrategias_hipo), 
+        "Alocéntricas" = "hipocampo_dependientes",
+        "Egocéntricas" = "hipocampo_independientes",
+        "Perseverancia" = "perseverancia"
+    ),
+      Tratamiento.Farm = factor(Tratamiento.Farm, levels = c("Salina", "Fluoxetina"))
+    )
+}
+
+# File paths for pre and post data
+file_paths_pre <- c("../data/estrategias_pre_good_juntos.csv", "./data/estrategias_pre_good_juntos.csv")
+file_paths_post <- c("../data/estrategias_post_juntos.csv", "./data/estrategias_post_juntos.csv")
+
+# Load and recode pre data
+estrategias_df_pre <- load_data(file_paths_pre) %>%
+  recode_estrategias()
+
+# Load and recode post data
+estrategias_df_post <- load_data(file_paths_post) %>%
+  recode_estrategias()
+
+
+```
+
+
+```r funcionEstrategias
+#| label: funcionEstrategias
+
+
+# create_estrategias_plot <- function(data, prueba_filter) {
+create_estrategias_plot <- function(data) {
+  estrategias <- data 
+
+  estrategias_plot <- ggplot(data = estrategias,
+          aes(x = dia, y = rate,
+              group = Tratamiento.Farm,
+              shape = Estres,
+              color = Tratamiento.Farm,
+              fill = Tratamiento.Farm
+              )
+    ) +
+    geom_line(linewidth = 0.3, linetype = "dashed", position = position_dodge(0.2)) +
+    geom_point(size = 3, position = position_dodge(0.2)) +
+  # geom_point(size = 7, shape = 21, position = position_dodge(0.1)) +
+    geom_pointrange(aes(ymin = rate-SE, ymax = rate+SE),
+                  size = 0.85, position = position_dodge(0.2)) +
+    facet_grid(Estres ~ estrategias_hipo) +
+    theme_prism(base_size = 14, palette = "candy_bright") + # border = TRUE
+    scale_shape_prism(palette = "filled") +
+    scale_y_continuous(limits = c(0, 4), guide = "prism_offset_minor") +
+    # guides(colour = guide_legend(position = "inside"),
+    #        fill = guide_legend(position = "inside"),
+    #        shape = guide_legend(position = "inside")) +
+    theme(legend.position = "top",
+          legend.position.inside = c(0.8, 0.75),
+          legend.key.height = unit(13, "pt")) +
+    labs(x = "Día",
+         y = "") +
+    # coord_cartesian(clip = "off") +
+    scale_color_prism("colorblind_safe") +
+    scale_fill_prism("colorblind_safe")
+
+  return(estrategias_plot)
+}
+
+
+```
+
+
+
+Luego, para comprobar que el aprendizaje en esta etapa fuera dependiente del hipocampo (estrategias [alocéntricas](AppendixB.qmd#term-id-97)), se analizaron las estrategias de búsqueda utilizadas en estos entrenamientos iniciales ([Fig @fig-estrategiasPre]). Para entender mejor la relación entre el uso de estrategias a través del tiempo en los distintos tratamientos, ajustamos una regresión de Poisson con efectos mixtos (utilizando máxima [verosimilitud](AppendixB.qmd#term-id-78)). La variable de respuesta es el número de tipo de estrategias, y las variables predictoras son el tiempo y tratamiento. Se incluyeron a los ratones como efectos mixtos para tomar en cuenta la dependencia de los datos en el tiempo (medidas repetidas). El modelo de regresión no presentó sobre [dispersión](AppendixB.qmd#term-id-77) (*dispersion ratio* = 0.69), por lo que cumple con el supuesto de homogeneidad de varianza en los datos y el modelo. Dentro de este modelo, el efecto de interacción entre `Tratamiento x Estres x Estrategia (alocéntrica, egocéntrica)` no fue significativo (prueba de razón de verosimilitud $X^2 (4) = 5.127, p = 0.274$).  Por otro lado, la interacción `Tiempo x Estrategia` es significativa (prueba de razón de verosimilitud $X^2 (1) = 26.125, p < 0.001$). Esto sugiere que el uso de estrategias cambia a lo largo del tiempo, independientemente del tratamiento y el estrés.
+
+
+
+```{r estrategiasPre}
+#| label: fig-estrategiasPre
+#| fig-cap: Estrategias de búsqueda durante la fase de entrenamiento. Las medias graficadas representan el estimado de estrategias utilizadas por tratamiento en cada día de los entrenamientos (4 pruebas por día).  
+#| fig-scap: "Estrategias de búsqueda durante la fase de entrenamiento"
+#| fig-pos: H
+#| out-width: "95%"
+
+p <- estrategias_df_pre %>%
+  mutate(estrategias_hipo = fct_relevel(estrategias_hipo, "Egocéntricas", "Alocéntricas")) %>%
+  ggplot( 
+      aes(fill=estrategias_hipo, 
+          y=rate, x=dia)) + 
+    geom_bar(position="fill", stat="identity", color = "black") +
+    facet_grid(Estres ~ Tratamiento.Farm) +
+    scale_fill_manual(values = alpha(c("#EA5455", "#2D4059"), 0.7)) +
+    scale_y_continuous(labels = c("0", "1", "2", "3", "4")) +  # Adjust y-axis limits for divergence
+    ggthemes::theme_clean(base_size = 14)+
+    theme(legend.position = "top") +
+    guides(fill = guide_legend(title = "")) +
+    labs(x = "Día", y = "Número Estrategias", title = "Estrategias de búsqueda") 
+
+
+customize_facet_strips(p, strip_colors = c("#ffffff", "#cad0d2", "#ffffff", "#e2345a"))
+
+
+
+# library(glmmTMB)
+# flx_data <- read.csv("./data/raw/estrategias_pre_poisson.csv")
+# flx_data <- read.csv("./data/raw/estrategias_post_poisson.csv")
+# flx_data <- read.csv("./data/raw/estrategias_post_poisson2.csv")
+
+# flx_data <- flx_data %>%
+#   dplyr::filter(str_detect(stage, "entrenamiento_"))
+
+# glm_zip <- glmmTMB(count ~ Tratamiento.Farm * Estres * estrategias_hipo * dia + (1 | x_target_id), 
+#                    ziformula = ~1, 
+#                    family = poisson, 
+#                    data = flx_data)
+
+# glm_zip_2 <- glmmTMB(count ~ Tratamiento.Farm + Estres + estrategias_hipo + dia + (1 | x_target_id), 
+#                    ziformula = ~1, 
+#                    family = poisson, 
+#                    data = flx_data)
+
+# anova(glm_zip, glm_zip_2)
+
+# glm_zip <- glmmTMB(count ~ estrategias_hipo * dia + (1 | x_target_id), 
+#                    ziformula = ~1, 
+#                    family = poisson, 
+#                    data = flx_data)
+
+# glm_zip_2 <- glmmTMB(count ~ estrategias_hipo + dia + (1 | x_target_id), 
+#                    ziformula = ~1, 
+#                    family = poisson, 
+#                    data = flx_data)
+
+# anova(glm_zip, glm_zip_2)
+
+
+# library("blmeco")
+# dispersion_glmer(glm1)
+# [1] 0.6924801
+# plot(fitted(glm1), residuals(glm1, type = "pearson"))
+# print(ranef(glm1))
+# library(DHARMa)
+# testZeroInkflation(glm1)
+
+# cuadrantes.emmeans.lmer <- emmeans(glm_zip,  
+#                         ~ Tratamiento.Farm | Estres | estrategias_hipo | dia, cov.reduce = FALSE)
+
+
+# cuadrantes.emmeans.lmer.df <- as.data.frame(cuadrantes.emmeans.lmer)
+
+
+# # library(gghighlight)
+
+# ggplot(cuadrantes.emmeans.lmer.df,
+#                     aes(
+#                       x = dia,
+#                       y = emmean,
+#                       group = Tratamiento.Farm,
+#                       color = Tratamiento.Farm
+#                     )) +
+#   geom_line(linewidth = 0.3, linetype = "dashed", position = position_dodge(0.1)) +
+#   geom_point(size = 3, position = position_dodge(0.1), aes(shape = Tratamiento.Farm)) +
+#   # geom_point(size = 7, shape = 21, position = position_dodge(0.1)) +
+#   geom_pointrange(aes(ymin = emmean-SE, ymax = emmean+SE),
+#                   size = 0.75, position = position_dodge(0.1)) + 
+#   facet_wrap( estrategias_hipo ~ Estres, axis.labels = "all_x") 
+
+
+
+# scale_color_manual(values = c("#222831", "#00ADB5", "#FF2E63", "#FF9800", "#8675A9", "#862B0D")) +
+#   gghighlight(emmean > 15, calculate_per_facet = T, use_direct_label = FALSE,
+#               unhighlighted_params = list(colour = NULL, alpha = 0.3)) +
+#   geom_hline(yintercept=15, linetype="dashed", color = "#006769", linewidth = 0.6) +
+#   labs(
+#     # caption = "Plotted with SEM",
+#     color = "Tratamientos",
+#     shape = "Tratamientos",
+#     x = "Prueba",
+#     y = "Segundos (s)") +
+#   ylim(0, 40) +
+#   # scale_x_discrete(labels=c("entrenamiento_rev_1"="1", "entrenamiento_rev_2"="2")) +
+#   # theme_classic() +
+#   # ggthemes::theme_base() +
+#   ggthemes::theme_clean() +
+#   # ggthemes::theme_clean() + 
+#   theme(legend.position='top', axis.text = element_text(size = 12),axis.title = element_text(size = 15)) 
+
+```

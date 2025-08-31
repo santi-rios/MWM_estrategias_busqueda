@@ -293,15 +293,22 @@ resultsServer <- function(id, values, parent_session = NULL) {
         updateSelectInput(session, "density_days",
                          choices = day_values,
                          selected = day_values)
+      } else {
+        updateSelectInput(session, "density_days", choices = NULL)
       }
       
       # Actualizar selects de estrategias
       updateSelectInput(session, "strategy_grouping",
                        choices = factor_names)
       
-      updateSelectInput(session, "strategy_days",
-                       choices = day_values,
-                       selected = day_values)
+      if (length(day_names) > 0) {
+        day_values <- sort(unique(factors_data[[day_names[1]]]))
+        updateSelectInput(session, "strategy_days",
+                         choices = day_values,
+                         selected = day_values)
+      } else {
+        updateSelectInput(session, "strategy_days", choices = NULL)
+      }
     })
     
     # Generar mapas de densidad
@@ -309,7 +316,8 @@ resultsServer <- function(id, values, parent_session = NULL) {
       req(values$processed_data, input$density_grouping, input$density_days)
       
       tryCatch({
-        showNotification("Generando mapas de densidad...", type = "default")
+  # Algunos entornos de Shiny pueden no aceptar 'default'; usar 'message' para máxima compatibilidad
+  showNotification("Generando mapas de densidad...", type = "message")
         
         # Crear mapas de densidad agrupados
         plots <- create_density_maps(
@@ -337,7 +345,7 @@ resultsServer <- function(id, values, parent_session = NULL) {
       req(values$strategies, input$strategy_grouping, input$strategy_days)
       
       tryCatch({
-        showNotification("Generando análisis de estrategias...", type = "default")
+  showNotification("Generando análisis de estrategias...", type = "message")
         
         # Crear análisis de estrategias
         results <- create_strategy_analysis(
@@ -391,11 +399,17 @@ resultsServer <- function(id, values, parent_session = NULL) {
     output$tracks_summary <- DT::renderDataTable({
       req(values$processed_data)
       
+      # Helper para devolver columna si existe o NA del largo correcto
+      get_col <- function(df, colname) {
+        if (colname %in% names(df)) return(df[[colname]])
+        rep(NA, nrow(df))
+      }
+      f <- values$processed_data$factors
       summary_data <- data.frame(
-        Track_ID = values$processed_data$factors$`_TrackID`,
-        Subject_ID = values$processed_data$factors$`_TargetID`,
-        Day = values$processed_data$factors$`_Day`,
-        Trial = values$processed_data$factors$`_Trial`
+        Track_ID = get_col(f, "_TrackID"),
+        Subject_ID = get_col(f, "_TargetID"),
+        Day = get_col(f, "_Day"),
+        Trial = get_col(f, "_Trial")
       )
       
       DT::datatable(

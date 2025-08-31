@@ -224,12 +224,15 @@ create_grouped_strategy_plot <- function(data, grouping_var) {
       proportion = count / total
     )
   
+  # Crear columnas seguras para ggplot (evita problemas con nombres no sintácticos)
+  summary_data$DayVar <- summary_data[[day_col]]
+  summary_data$GroupVar <- summary_data[[grouping_var]]
+  
   # Crear gráfico de barras apiladas
   p <- ggplot2::ggplot(summary_data, 
-                      ggplot2::aes_string(x = day_col, y = "proportion", 
-                                         fill = "estrategias_hipo")) +
+                      ggplot2::aes(x = DayVar, y = proportion, fill = estrategias_hipo)) +
     ggplot2::geom_bar(stat = "identity", position = "fill", color = "black") +
-    ggplot2::facet_wrap(stats::as.formula(paste("~", grouping_var))) +
+    ggplot2::facet_wrap(~ GroupVar) +
     ggplot2::scale_fill_manual(values = c("Egocéntricas" = "#EA5455", 
                                          "Alocéntricas" = "#2D4059",
                                          "Perseverancia" = "#F07B3F")) +
@@ -261,13 +264,17 @@ create_individual_strategy_plot <- function(data, grouping_var) {
     dplyr::group_by(!!dplyr::sym(grouping_var), !!dplyr::sym(day_col), name, estrategias_hipo) %>%
     dplyr::summarise(count = dplyr::n(), .groups = "drop")
   
+  # Columnas seguras para ggplot
+  summary_data$DayVar <- summary_data[[day_col]]
+  summary_data$GroupVar <- summary_data[[grouping_var]]
+  
   # Crear gráfico de líneas
   p <- ggplot2::ggplot(summary_data, 
-                      ggplot2::aes_string(x = day_col, y = "count", 
-                                         color = "name", linetype = "estrategias_hipo")) +
+                      ggplot2::aes(x = DayVar, y = count, 
+                                   color = name, linetype = estrategias_hipo)) +
     ggplot2::geom_line(size = 1) +
     ggplot2::geom_point(size = 2) +
-    ggplot2::facet_wrap(stats::as.formula(paste("~", grouping_var))) +
+    ggplot2::facet_wrap(~ GroupVar) +
     ggplot2::theme_minimal() +
     ggplot2::theme(
       legend.position = "bottom",

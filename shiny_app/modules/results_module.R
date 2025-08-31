@@ -54,6 +54,11 @@ resultsUI <- function(id) {
                          choices = NULL,
                          multiple = TRUE),
               
+              selectInput(ns("density_arenas"),
+                         "Arenas a incluir:",
+                         choices = NULL,
+                         multiple = TRUE),
+              
               hr(),
               
               h5("Configuración Visual"),
@@ -254,6 +259,112 @@ resultsUI <- function(id) {
               DT::dataTableOutput(ns("strategies_table"))
             )
           )
+        ),
+        
+        # Tab: Resultados Exportados
+        tabPanel("📈 Análisis Completo",
+          br(),
+          fluidRow(
+            box(
+              title = "Configuración de Análisis",
+              status = "primary",
+              solidHeader = TRUE,
+              width = 4,
+              
+              h5("Variable a Analizar"),
+              
+              selectInput(ns("analysis_variable"),
+                         "Variable de interés:",
+                         choices = NULL),
+              
+              selectInput(ns("analysis_grouping"),
+                         "Agrupar por:",
+                         choices = NULL),
+              
+              selectInput(ns("analysis_days"),
+                         "Días a incluir:",
+                         choices = NULL,
+                         multiple = TRUE),
+              
+              checkboxInput(ns("show_error_bars"),
+                           "Mostrar barras de error (±SE)",
+                           value = TRUE),
+              
+              checkboxInput(ns("log_transform"),
+                           "Transformación logarítmica",
+                           value = FALSE),
+              
+              br(),
+              
+              actionButton(ns("generate_analysis"),
+                          "📊 Generar Análisis",
+                          class = "btn-primary"),
+              
+              br(), br(),
+              
+              h5("Análisis Estadístico"),
+              
+              selectInput(ns("stat_test"),
+                         "Prueba estadística:",
+                         choices = c(
+                           "ANOVA" = "anova",
+                           "t-test" = "ttest",
+                           "Kruskal-Wallis" = "kruskal",
+                           "Mann-Whitney" = "wilcox",
+                           "Poisson GLM (log, LRT interacción)" = "poisson"
+                         )
+              ),
+              
+              actionButton(ns("run_statistics"),
+                          "📈 Ejecutar Estadística",
+                          class = "btn-info")
+            ),
+            
+            box(
+              title = "Gráfico de Análisis",
+              status = "success",
+              solidHeader = TRUE,
+              width = 8,
+              
+              conditionalPanel(
+                condition = paste0("!output['", ns("analysis_plots_ready"), "']"),
+                div(
+                  style = "text-align: center; padding: 40px; color: #666;",
+                  icon("chart-bar", style = "font-size: 48px;"),
+                  h4("Configurar y generar análisis"),
+                  p("Selecciona los parámetros y presiona 'Generar Análisis'")
+                )
+              ),
+              
+              conditionalPanel(
+                condition = paste0("output['", ns("analysis_plots_ready"), "']"),
+                plotOutput(ns("analysis_plots"), height = "500px")
+              )
+            )
+          ),
+          
+          fluidRow(
+            box(
+              title = "Resultados Estadísticos",
+              status = "info",
+              solidHeader = TRUE,
+              width = 6,
+              
+              conditionalPanel(
+                condition = paste0("output['", ns("stats_results_available"), "']"),
+                verbatimTextOutput(ns("statistical_results"))
+              )
+            ),
+            
+            box(
+              title = "Datos Exportados Completos",
+              status = "success",
+              solidHeader = TRUE,
+              width = 6,
+              
+              DT::dataTableOutput(ns("exported_results_table"))
+            )
+          )
         )
       )
     )
@@ -268,6 +379,8 @@ resultsServer <- function(id, values, parent_session = NULL) {
     density_maps <- reactiveVal(NULL)
     strategy_plots <- reactiveVal(NULL)
     statistical_results <- reactiveVal(NULL)
+    analysis_plots <- reactiveVal(NULL)
+    stats_results <- reactiveVal(NULL)
     
     # Verificar si hay resultados disponibles
     output$results_available <- reactive({
@@ -283,6 +396,7 @@ resultsServer <- function(id, values, parent_session = NULL) {
       factors_data <- values$processed_data$factors
       factor_names <- names(factors_data)[!grepl("^_", names(factors_data))]
       day_names <- names(factors_data)[grepl("^_Day", names(factors_data))]
+      arena_names <- names(factors_data)[grepl("^_Arena", names(factors_data))]
       
       # Actualizar selects de mapas de densidad
       updateSelectInput(session, "density_grouping",
@@ -297,6 +411,15 @@ resultsServer <- function(id, values, parent_session = NULL) {
         updateSelectInput(session, "density_days", choices = NULL)
       }
       
+      if (length(arena_names) > 0) {
+        arena_values <- unique(factors_data[[arena_names[1]]])
+        updateSelectInput(session, "density_arenas",
+                         choices = arena_values,
+                         selected = arena_values)
+      } else {
+        updateSelectInput(session, "density_arenas", choices = NULL)
+      }
+      
       # Actualizar selects de estrategias
       updateSelectInput(session, "strategy_grouping",
                        choices = factor_names)
@@ -309,6 +432,24 @@ resultsServer <- function(id, values, parent_session = NULL) {
       } else {
         updateSelectInput(session, "strategy_days", choices = NULL)
       }
+      
+      # Actualizar selects para análisis completo
+      if (!is.null(values$analysis_config) && !is.null(values$analysis_config$results_export)) {
+        numeric_vars <- names(values$analysis_config$results_export)[
+          sapply(values$analysis_config$results_export, is.numeric)
+        ]
+        
+        updateSelectInput(session, "analysis_variable",
+                         choices = numeric_vars,
+                         selected = if("velocity" %in% numeric_vars) "velocity" else numeric_vars[1])
+        
+        updateSelectInput(session, "analysis_grouping",
+                         choices = factor_names)
+        
+        updateSelectInput(session, "analysis_days",
+                         choices = day_values,
+                         selected = day_values)
+      }
     })
     
     # Generar mapas de densidad
@@ -316,14 +457,15 @@ resultsServer <- function(id, values, parent_session = NULL) {
       req(values$processed_data, input$density_grouping, input$density_days)
       
       tryCatch({
-  # Algunos entornos de Shiny pueden no aceptar 'default'; usar 'message' para máxima compatibilidad
-  showNotification("Generando mapas de densidad...", type = "message")
+        # Algunos entornos de Shiny pueden no aceptar 'default'; usar 'message' para máxima compatibilidad
+        showNotification("Generando mapas de densidad...", type = "message")
         
         # Crear mapas de densidad agrupados
         plots <- create_density_maps(
           experiment_data = values$processed_data,
           grouping_var = input$density_grouping,
           days_filter = input$density_days,
+          arena_filter = input$density_arenas,
           color_palette = input$color_palette,
           resolution = input$resolution,
           color_levels = input$color_levels,
@@ -333,14 +475,12 @@ resultsServer <- function(id, values, parent_session = NULL) {
         density_maps(plots)
         values$density_plots <- plots
         
-        showNotification("Mapas de densidad generados correctamente", type = "success")
+  showNotification("Mapas de densidad generados correctamente", type = "message")
         
       }, error = function(e) {
         showNotification(paste("Error generando mapas:", e$message), type = "error")
       })
-    })
-    
-    # Generar análisis de estrategias
+    })    # Generar análisis de estrategias
     observeEvent(input$generate_strategy_analysis, {
       req(values$strategies, input$strategy_grouping, input$strategy_days)
       
@@ -361,10 +501,78 @@ resultsServer <- function(id, values, parent_session = NULL) {
         values$strategy_plots <- results$plots
         values$statistical_results <- results$stats
         
-        showNotification("Análisis de estrategias generado correctamente", type = "success")
+  showNotification("Análisis de estrategias generado correctamente", type = "message")
         
       }, error = function(e) {
         showNotification(paste("Error generando análisis:", e$message), type = "error")
+      })
+    })
+    
+    # Generar análisis completo
+    observeEvent(input$generate_analysis, {
+      req(values$analysis_config, input$analysis_variable, input$analysis_grouping)
+      
+      tryCatch({
+  showNotification("Generando análisis completo...", type = "message")
+        
+        # Usar los datos exportados completos
+        if (!is.null(values$analysis_config$results_export)) {
+          plot_obj <- create_comprehensive_analysis(
+            results_data = values$analysis_config$results_export,
+            variable = input$analysis_variable,
+            grouping_var = input$analysis_grouping,
+            days_filter = input$analysis_days,
+            show_error_bars = input$show_error_bars,
+            log_transform = input$log_transform
+          )
+          
+          analysis_plots(plot_obj)
+          
+          showNotification("Análisis completo generado correctamente", type = "message")
+        } else {
+          showNotification("No hay datos exportados disponibles", type = "warning")
+        }
+        
+      }, error = function(e) {
+        showNotification(paste("Error generando análisis:", e$message), type = "error")
+      })
+    })
+    
+    # Ejecutar análisis estadísticos
+    observeEvent(input$run_statistics, {
+      req(values$analysis_config, input$analysis_variable, input$analysis_grouping, input$stat_test)
+      
+      tryCatch({
+  showNotification("Ejecutando análisis estadístico...", type = "message")
+        
+        if (!is.null(values$analysis_config$results_export)) {
+          # Filtrar datos si es necesario
+          data_for_stats <- values$analysis_config$results_export
+          
+          if (!is.null(input$analysis_days)) {
+            day_col <- names(data_for_stats)[grepl("^_Day", names(data_for_stats))][1]
+            if (!is.null(day_col)) {
+              data_for_stats <- data_for_stats[data_for_stats[[day_col]] %in% input$analysis_days, ]
+            }
+          }
+          
+          # Ejecutar análisis estadístico
+          stats_result <- perform_statistical_analysis(
+            data = data_for_stats,
+            variable = input$analysis_variable,
+            grouping_var = input$analysis_grouping,
+            test_type = input$stat_test
+          )
+          
+          stats_results(stats_result)
+          
+          showNotification("Análisis estadístico completado", type = "message")
+        } else {
+          showNotification("No hay datos exportados disponibles", type = "warning")
+        }
+        
+      }, error = function(e) {
+        showNotification(paste("Error en análisis estadístico:", e$message), type = "error")
       })
     })
     
@@ -384,6 +592,16 @@ resultsServer <- function(id, values, parent_session = NULL) {
     })
     outputOptions(output, "stats_available", suspendWhenHidden = FALSE)
     
+    output$analysis_plots_ready <- reactive({
+      !is.null(analysis_plots())
+    })
+    outputOptions(output, "analysis_plots_ready", suspendWhenHidden = FALSE)
+    
+    output$stats_results_available <- reactive({
+      !is.null(stats_results())
+    })
+    outputOptions(output, "stats_results_available", suspendWhenHidden = FALSE)
+    
     # Renderizar plots
     output$density_plots <- renderPlot({
       req(density_maps())
@@ -393,6 +611,11 @@ resultsServer <- function(id, values, parent_session = NULL) {
     output$strategy_plots <- renderPlot({
       req(strategy_plots())
       strategy_plots()
+    })
+    
+    output$analysis_plots <- renderPlot({
+      req(analysis_plots())
+      analysis_plots()
     })
     
     # Tablas de datos
@@ -447,6 +670,47 @@ resultsServer <- function(id, values, parent_session = NULL) {
         summary(statistical_results()$model)
       } else {
         "Análisis estadístico no disponible"
+      }
+    })
+    
+    output$statistical_results <- renderPrint({
+      req(stats_results())
+      res <- stats_results()
+      if (!is.null(res$result)) {
+        cat("Prueba:", res$test, "\n")
+        if (!is.null(res$formula)) {
+          cat("Fórmula:", deparse(res$formula), "\n")
+        }
+        if (!is.null(res$family)) {
+          cat("Familia:", res$family, "\n")
+        }
+        cat("\nResultado principal:\n")
+        print(res$result)
+        if (!is.null(res$lrt)) {
+          cat("\nComparación LRT (modelo sin interacción vs con interacción):\n")
+          print(res$lrt)
+        }
+      } else {
+        "Análisis estadístico no disponible"
+      }
+    })
+    
+    output$exported_results_table <- DT::renderDataTable({
+      req(values$analysis_config)
+      
+      if (!is.null(values$analysis_config$results_export)) {
+        DT::datatable(
+          values$analysis_config$results_export,
+          options = list(
+            pageLength = 15,
+            scrollX = TRUE,
+            dom = 'Blfrtip',
+            buttons = c('copy', 'csv', 'excel')
+          ),
+          class = 'cell-border stripe hover',
+          extensions = 'Buttons'
+        ) %>%
+          DT::formatRound(columns = which(sapply(values$analysis_config$results_export, is.numeric)), digits = 3)
       }
     })
   })

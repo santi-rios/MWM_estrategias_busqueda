@@ -255,19 +255,12 @@ analysisServer <- function(id, values, parent_session = NULL) {
         # Copiar los datos para no modificar el original reactivo
         temp_experiment_data <- values$experiment_data
         
-        # Obtener nombre de arena y quitarle la extensión .txt si la tiene
-        arena_name_from_data <- unique(temp_experiment_data$`_Arena`)[1]
-        arena_name_base <- sub("\\.txt$", "", arena_name_from_data)
-        
-        if (length(unique(temp_experiment_data$`_Arena`)) > 1) {
-          add_to_log("⚠️ Múltiples arenas detectadas. Usando la primera.")
+        # Asegurarnos de que los archivos de arena requeridos existen en project_dir
+        arenas_needed <- unique(na.omit(temp_experiment_data$`_Arena`))
+        if (length(arenas_needed) == 0) {
+          stop("El experimento no especifica ninguna arena en la columna _Arena")
         }
-        
-        # NO modificar la columna _Arena - mantener el valor original
-        # Rtrack buscará el archivo de arena usando el valor de la columna `_Arena`
-        # y añadiendo la extensión .txt si no la tiene.
-        # Por eso, creamos el archivo con el nombre base.
-        
+
         # Crear un directorio temporal para los archivos de análisis
         temp_dir <- tempfile(pattern = "mwm_analysis_")
         dir.create(temp_dir)
@@ -276,17 +269,26 @@ analysisServer <- function(id, values, parent_session = NULL) {
         temp_exp_file <- file.path(temp_dir, "experiment_data.xlsx")
         writexl::write_xlsx(temp_experiment_data, temp_exp_file)
         
-        # Crear archivo de arena basado en la configuración del usuario
-        add_to_log("Creando archivo de arena...")
-        
-        # Crear archivo de arena en el mismo directorio temporal
-        arena_file <- create_arena_file(
-          arena_info = values$arena_config,
-          arena_name = arena_name_base, # Usa el nombre base sin extensión
-          output_dir = temp_dir
-        )
-        
-        add_to_log(paste("Archivo de arena creado:", basename(arena_file)))
+        # Copiar todos los archivos de arena requeridos al directorio del proyecto
+        add_to_log("Preparando archivos de arena...")
+        if (is.null(values$arena_config) || is.null(values$arena_config$files)) {
+          stop("No hay archivos de arena disponibles. Genera o sube los .txt en la pestaña 'Configurar Arena'.")
+        }
+        arena_files_map <- values$arena_config$files
+        # Normalizar nombres requeridos a 'BaseName.txt'
+        arenas_required_files <- vapply(arenas_needed, function(a) {
+          nm <- if (grepl("\\.txt$", a)) a else paste0(a, ".txt")
+          sub("^.*/", "", nm)
+        }, character(1))
+        # Verificar disponibilidad y copiar
+        for (fname in arenas_required_files) {
+          src <- arena_files_map[[fname]]
+          if (is.null(src) || !file.exists(src)) {
+            stop(paste0("Falta el archivo de arena requerido: ", fname, ". Genera o sube este archivo."))
+          }
+          file.copy(src, file.path(temp_dir, fname), overwrite = TRUE)
+        }
+        add_to_log(paste("Arenas listas:", paste(arenas_required_files, collapse = ", ")))        
         
         add_to_log("Procesando tracks con Rtrack...")
         
@@ -366,7 +368,7 @@ analysisServer <- function(id, values, parent_session = NULL) {
         add_to_log("✅ Análisis completado exitosamente!")
         analysis_complete(TRUE)
         
-        showNotification("Análisis completado correctamente", type = "success", duration = 5)
+  showNotification("Análisis completado correctamente", type = "message", duration = 5)
         
       }, error = function(e) {
         add_to_log(paste("❌ Error:", e$message))

@@ -147,45 +147,82 @@ process_mwm_experiment <- function(experiment_file, data_dir, project_dir = NULL
 process_strategy_data <- function(experiment, strategies, grouping_vars = NULL, 
                                  treatment_var = NULL, day_var = "_Day") {
   
-  # Combinar datos de experimento con estrategias
-  factors_df <- experiment$factors
-  strategies_df <- strategies$calls
-  
-  # Agregar Track ID si no existe
-  if (!"Track_ID" %in% names(strategies_df)) {
-    strategies_df$Track_ID <- rownames(strategies_df)
-  }
-  
-  # Merge datos
-  if ("_TrackID" %in% names(factors_df)) {
-    merged_data <- merge(factors_df, strategies_df, 
-                        by.x = "_TrackID", by.y = "Track_ID", all = TRUE)
-  } else {
-    # Si no hay _TrackID, usar índices
-    merged_data <- cbind(factors_df, strategies_df)
-  }
-  
-  # Clasificar estrategias
-  merged_data <- classify_strategies(merged_data)
-  
-  # Procesar para análisis longitudinal si se especifica
-  if (!is.null(day_var) && day_var %in% names(merged_data)) {
-    longitudinal_data <- create_longitudinal_data(merged_data, grouping_vars, treatment_var, day_var)
+  # Exportar resultados completos usando Rtrack
+  tryCatch({
+    results_df <- Rtrack::export_results(experiment)
+    
+    # Combinar con estrategias
+    strategies_df <- strategies$calls
+    
+    # Agregar Track ID si no existe en strategies
+    if (!"Track_ID" %in% names(strategies_df)) {
+      strategies_df$Track_ID <- rownames(strategies_df)
+    }
+    
+    # Merge con resultados exportados
+    if ("Track_ID" %in% names(results_df) && "Track_ID" %in% names(strategies_df)) {
+      merged_data <- merge(results_df, strategies_df, 
+                          by = "Track_ID", all.x = TRUE)
+    } else {
+      # Fallback: usar índices si no hay Track_ID
+      merged_data <- cbind(results_df, strategies_df)
+    }
+    
+    # Clasificar estrategias
+    merged_data <- classify_strategies(merged_data)
+    
+    # Procesar para análisis longitudinal si se especifica
+    if (!is.null(day_var) && day_var %in% names(merged_data)) {
+      longitudinal_data <- create_longitudinal_data(merged_data, grouping_vars, treatment_var, day_var)
+      
+      return(list(
+        merged_data = merged_data,
+        longitudinal_data = longitudinal_data,
+        results_export = results_df,
+        strategies_data = strategies_df,
+        grouping_vars = grouping_vars,
+        treatment_var = treatment_var,
+        day_var = day_var
+      ))
+    }
     
     return(list(
       merged_data = merged_data,
-      longitudinal_data = longitudinal_data,
+      results_export = results_df,
+      strategies_data = strategies_df,
       grouping_vars = grouping_vars,
-      treatment_var = treatment_var,
-      day_var = day_var
+      treatment_var = treatment_var
     ))
-  }
-  
-  return(list(
-    merged_data = merged_data,
-    grouping_vars = grouping_vars,
-    treatment_var = treatment_var
-  ))
+    
+  }, error = function(e) {
+    # Fallback a método anterior si export_results falla
+    warning(paste("export_results falló, usando método básico:", e$message))
+    
+    factors_df <- experiment$factors
+    strategies_df <- strategies$calls
+    
+    # Agregar Track ID si no existe
+    if (!"Track_ID" %in% names(strategies_df)) {
+      strategies_df$Track_ID <- rownames(strategies_df)
+    }
+    
+    # Merge datos
+    if ("_TrackID" %in% names(factors_df)) {
+      merged_data <- merge(factors_df, strategies_df, 
+                          by.x = "_TrackID", by.y = "Track_ID", all = TRUE)
+    } else {
+      merged_data <- cbind(factors_df, strategies_df)
+    }
+    
+    # Clasificar estrategias
+    merged_data <- classify_strategies(merged_data)
+    
+    return(list(
+      merged_data = merged_data,
+      grouping_vars = grouping_vars,
+      treatment_var = treatment_var
+    ))
+  })
 }
 
 # Función para clasificar estrategias según categorías cognitivas

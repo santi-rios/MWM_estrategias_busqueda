@@ -4,27 +4,37 @@
 # Función para crear mapas de densidad agrupados
 create_density_maps <- function(experiment_data, grouping_var, days_filter = NULL,
                                color_palette = "viridis", resolution = 900,
-                               color_levels = 300, show_legend = FALSE) {
+                               color_levels = 300, show_legend = FALSE, arena_filter = NULL) {
   
-  # Filtrar datos por días si se especifica
+  # Filtrar datos por días y arena si se especifica
+  filter_mask <- rep(TRUE, length(experiment_data$metrics))
+  
   if (!is.null(days_filter)) {
     day_col <- names(experiment_data$factors)[grepl("^_Day", names(experiment_data$factors))][1]
     if (!is.null(day_col)) {
-      filter_mask <- experiment_data$factors[[day_col]] %in% days_filter
-      metrics_filtered <- experiment_data$metrics[filter_mask]
-      factors_filtered <- experiment_data$factors[filter_mask, ]
-    } else {
-      metrics_filtered <- experiment_data$metrics
-      factors_filtered <- experiment_data$factors
+      filter_mask <- filter_mask & (experiment_data$factors[[day_col]] %in% days_filter)
     }
-  } else {
-    metrics_filtered <- experiment_data$metrics
-    factors_filtered <- experiment_data$factors
+  }
+  
+  if (!is.null(arena_filter)) {
+    arena_col <- names(experiment_data$factors)[grepl("^_Arena", names(experiment_data$factors))][1]
+    if (!is.null(arena_col)) {
+      filter_mask <- filter_mask & (experiment_data$factors[[arena_col]] %in% arena_filter)
+    }
+  }
+  
+  metrics_filtered <- experiment_data$metrics[filter_mask]
+  factors_filtered <- experiment_data$factors[filter_mask, ]
+  
+  # Verificar que tenemos datos
+  if (length(metrics_filtered) == 0) {
+    stop("No hay datos después del filtrado")
   }
   
   # Obtener grupos únicos
   if (grouping_var %in% names(factors_filtered)) {
     groups <- unique(factors_filtered[[grouping_var]])
+    groups <- groups[!is.na(groups)]
   } else {
     stop(paste("Variable de agrupación", grouping_var, "no encontrada"))
   }
@@ -39,93 +49,72 @@ create_density_maps <- function(experiment_data, grouping_var, days_filter = NUL
     viridis::viridis
   )
   
-  # Crear plots para cada grupo
-  plots_list <- list()
-  
-  for (group in groups) {
-    group_mask <- factors_filtered[[grouping_var]] == group
-    group_metrics <- metrics_filtered[group_mask]
-    
-    if (length(group_metrics) > 0) {
-      tryCatch({
-        # Crear plot de densidad
-        p <- Rtrack::plot_density(
-          group_metrics,
-          title = paste(grouping_var, ":", group),
-          col = color_func(color_levels),
-          resolution = resolution,
-          feature.col = "#E87FB0",
-          feature.lwd = 4,
-          legend = show_legend
-        )
-        
-        plots_list[[as.character(group)]] <- p
-        
-      }, error = function(e) {
-        warning(paste("Error creando mapa para grupo", group, ":", e$message))
-      })
+  # Crear función que genere todos los plots
+  combined_plot <- function() {
+    # Determinar layout
+    n_groups <- length(groups)
+    if (n_groups > 1) {
+      n_cols <- min(3, ceiling(sqrt(n_groups)))
+      n_rows <- ceiling(n_groups / n_cols)
+      par(mfrow = c(n_rows, n_cols), mar = c(4, 4, 3, 2))
+    } else {
+      par(mfrow = c(1, 1), mar = c(5, 4, 4, 2))
     }
-  }
-  
-  if (length(plots_list) == 0) {
-    stop("No se pudieron crear mapas de densidad")
-  }
-  
-  # Combinar plots en una sola figura
-  if (length(plots_list) > 1) {
-    # Configurar layout de múltiples plots
-    n_plots <- length(plots_list)
-    n_cols <- ceiling(sqrt(n_plots))
-    n_rows <- ceiling(n_plots / n_cols)
     
-    # Configurar el layout
-    par(mfrow = c(n_rows, n_cols), mar = c(4, 4, 3, 2))
+    plots_created <- 0
     
-    # Crear función que genere todos los plots
-    combined_plot <- function() {
-      for (i in seq_along(plots_list)) {
-        # Recrear cada plot (necesario porque plot_density no retorna objeto de plot)
-        group <- names(plots_list)[i]
-        group_mask <- factors_filtered[[grouping_var]] == group
-        group_metrics <- metrics_filtered[group_mask]
-        
-        if (length(group_metrics) > 0) {
+    for (group in groups) {
+      group_mask <- factors_filtered[[grouping_var]] == group
+      group_metrics <- metrics_filtered[group_mask]
+      
+      if (length(group_metrics) > 0) {
+        tryCatch({
+          # Verificar si hay múltiples arenas en este grupo
+          group_arenas <- unique(factors_filtered[group_mask, ]$`_Arena`)
+          
+          if (length(group_arenas) > 1) {
+            # Advertir sobre múltiples arenas pero continuar
+            title_text <- paste(grouping_var, ":", group, "(múltiples arenas)")
+          } else {
+            title_text <- paste(grouping_var, ":", group)
+          }
+          
+          # Crear plot de densidad
           Rtrack::plot_density(
             group_metrics,
-            title = paste(grouping_var, ":", group),
+            title = title_text,
             col = color_func(color_levels),
             resolution = resolution,
             feature.col = "#E87FB0",
             feature.lwd = 4,
             legend = show_legend
           )
-        }
+          
+          plots_created <- plots_created + 1
+          
+        }, error = function(e) {
+          # Crear un plot vacío con mensaje de error
+          plot.new()
+          text(0.5, 0.5, paste("Error:", e$message), cex = 0.8, col = "red")
+          title(paste("Error -", grouping_var, ":", group))
+        })
+      } else {
+        # Crear un plot vacío si no hay datos
+        plot.new()
+        text(0.5, 0.5, "Sin datos", cex = 1, col = "gray")
+        title(paste(grouping_var, ":", group, "- Sin datos"))
       }
-      par(mfrow = c(1, 1))  # Resetear layout
     }
     
-    return(combined_plot)
+    # Resetear layout
+    par(mfrow = c(1, 1), mar = c(5, 4, 4, 2))
     
-  } else {
-    # Un solo plot
-    group <- names(plots_list)[1]
-    group_mask <- factors_filtered[[grouping_var]] == group
-    group_metrics <- metrics_filtered[group_mask]
-    
-    single_plot <- function() {
-      Rtrack::plot_density(
-        group_metrics,
-        title = paste(grouping_var, ":", group),
-        col = color_func(color_levels),
-        resolution = resolution,
-        feature.col = "#E87FB0",
-        feature.lwd = 4,
-        legend = show_legend
-      )
+    if (plots_created == 0) {
+      stop("No se pudieron crear mapas de densidad")
     }
-    
-    return(single_plot)
   }
+  
+  return(combined_plot)
 }
 
 # Función para crear análisis de estrategias
@@ -343,4 +332,209 @@ customize_facet_strips <- function(plot_obj, strip_colors) {
   # Esta función replicaría tu función customize_facet_strips
   # Por ahora retorna el plot sin modificaciones
   return(plot_obj)
+}
+
+# Función para crear análisis completo con resultados exportados
+create_comprehensive_analysis <- function(results_data, variable, grouping_var, 
+                                        days_filter = NULL, show_error_bars = TRUE,
+                                        log_transform = FALSE) {
+  
+  # Filtrar datos por días
+  if (!is.null(days_filter)) {
+    day_col <- names(results_data)[grepl("^_Day", names(results_data))][1]
+    if (!is.null(day_col)) {
+      results_data <- results_data[results_data[[day_col]] %in% days_filter, ]
+    }
+  }
+  
+  # Verificar que tenemos las variables necesarias
+  if (!variable %in% names(results_data)) {
+    stop(paste("Variable", variable, "no encontrada en los datos"))
+  }
+  
+  if (!grouping_var %in% names(results_data)) {
+    stop(paste("Variable de agrupación", grouping_var, "no encontrada"))
+  }
+  
+  # Transformación logarítmica si se solicita
+  if (log_transform) {
+    results_data[[variable]] <- log10(results_data[[variable]] + 1)
+    y_label <- paste("log10(", variable, " + 1)")
+  } else {
+    y_label <- variable
+  }
+  
+  # Preparar datos para el gráfico
+  day_col <- names(results_data)[grepl("^_Day", names(results_data))][1]
+  
+  if (!is.null(day_col)) {
+    # Gráfico con días como eje X
+    p <- ggplot2::ggplot(results_data, 
+                        ggplot2::aes_string(x = day_col, y = variable, 
+                                           color = grouping_var, fill = grouping_var))
+    
+    if (show_error_bars) {
+      p <- p + ggplot2::stat_summary(fun = mean, geom = "point", size = 3, position = ggplot2::position_dodge(0.3)) +
+               ggplot2::stat_summary(fun = mean, geom = "line", size = 1, position = ggplot2::position_dodge(0.3), 
+                                    ggplot2::aes_string(group = grouping_var)) +
+               ggplot2::stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, 
+                                    position = ggplot2::position_dodge(0.3))
+    } else {
+      p <- p + ggplot2::stat_summary(fun = mean, geom = "point", size = 3, position = ggplot2::position_dodge(0.3)) +
+               ggplot2::stat_summary(fun = mean, geom = "line", size = 1, position = ggplot2::position_dodge(0.3),
+                                    ggplot2::aes_string(group = grouping_var))
+    }
+    
+    p <- p + ggplot2::labs(x = "Día", y = y_label, color = grouping_var, fill = grouping_var)
+    
+  } else {
+    # Gráfico de barras simple sin días
+    p <- ggplot2::ggplot(results_data, 
+                        ggplot2::aes_string(x = grouping_var, y = variable, fill = grouping_var))
+    
+    if (show_error_bars) {
+      p <- p + ggplot2::stat_summary(fun = mean, geom = "bar", alpha = 0.7) +
+               ggplot2::stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2)
+    } else {
+      p <- p + ggplot2::stat_summary(fun = mean, geom = "bar", alpha = 0.7)
+    }
+    
+    p <- p + ggplot2::labs(x = grouping_var, y = y_label, fill = grouping_var)
+  }
+  
+  # Tema y estilo
+  p <- p + ggplot2::theme_minimal() +
+           ggplot2::theme(
+             legend.position = "top",
+             strip.background = ggplot2::element_rect(fill = "white", color = "gray"),
+             strip.text = ggplot2::element_text(face = "bold"),
+             axis.text.x = ggplot2::element_text(angle = 45, hjust = 1)
+           ) +
+           ggplot2::scale_color_viridis_d() +
+           ggplot2::scale_fill_viridis_d()
+  
+  return(p)
+}
+
+# Función auxiliar para calcular mean_se
+mean_se <- function(x) {
+  n <- length(x[!is.na(x)])
+  mean_val <- mean(x, na.rm = TRUE)
+  se_val <- sd(x, na.rm = TRUE) / sqrt(n)
+  
+  data.frame(
+    y = mean_val,
+    ymin = mean_val - se_val,
+    ymax = mean_val + se_val
+  )
+}
+
+# Función para ejecutar análisis estadísticos
+perform_statistical_analysis <- function(data, variable, grouping_var, test_type = "anova") {
+  
+  # Verificar que tenemos datos válidos
+  if (!variable %in% names(data) || !grouping_var %in% names(data)) {
+    stop("Variables no encontradas en los datos")
+  }
+  
+  # Remover NAs
+  clean_data <- data[!is.na(data[[variable]]) & !is.na(data[[grouping_var]]), ]
+  
+  if (nrow(clean_data) == 0) {
+    stop("No hay datos válidos para el análisis")
+  }
+  
+  # Crear fórmula base
+  formula_str <- paste(variable, "~", grouping_var)
+  formula_obj <- as.formula(formula_str)
+  
+  # Ejecutar la prueba seleccionada
+  result <- tryCatch({
+    switch(test_type,
+           "anova" = {
+             if (length(unique(clean_data[[grouping_var]])) > 2) {
+               aov_result <- aov(formula_obj, data = clean_data)
+               list(
+                 test = "ANOVA",
+                 result = summary(aov_result),
+                 model = aov_result,
+                 formula = formula_obj
+               )
+             } else {
+               t_result <- t.test(formula_obj, data = clean_data)
+               list(
+                 test = "t-test (2 grupos)",
+                 result = t_result,
+                 model = t_result,
+                 formula = formula_obj
+               )
+             }
+           },
+           "ttest" = {
+             t_result <- t.test(formula_obj, data = clean_data)
+             list(
+               test = "t-test",
+               result = t_result,
+               model = t_result,
+               formula = formula_obj
+             )
+           },
+           "kruskal" = {
+             k_result <- kruskal.test(formula_obj, data = clean_data)
+             list(
+               test = "Kruskal-Wallis",
+               result = k_result,
+               model = k_result,
+               formula = formula_obj
+             )
+           },
+           "wilcox" = {
+             w_result <- wilcox.test(formula_obj, data = clean_data)
+             list(
+               test = "Mann-Whitney U",
+               result = w_result,
+               model = w_result,
+               formula = formula_obj
+             )
+           },
+           "poisson" = {
+             # Armar modelos Poisson con y sin interacción si hay día
+             day_col <- names(clean_data)[grepl("^_Day", names(clean_data))][1]
+             has_day <- !is.null(day_col) && length(unique(clean_data[[day_col]])) > 1
+             # Modelo sin interacción
+             f_null <- if (has_day) as.formula(paste(variable, "~", grouping_var, "+", day_col)) else formula_obj
+             # Modelo con interacción
+             f_full <- if (has_day) as.formula(paste(variable, "~", grouping_var, "*", day_col)) else as.formula(paste(variable, "~", grouping_var))
+
+             # Verificar no-negativo
+             if (any(clean_data[[variable]] < 0, na.rm = TRUE)) {
+               stop("La variable tiene valores negativos; Poisson requiere conteos (>= 0)")
+             }
+             # Ajustar GLM Poisson
+             m_null <- glm(f_null, data = clean_data, family = poisson(link = "log"))
+             m_full <- glm(f_full, data = clean_data, family = poisson(link = "log"))
+             lrt <- tryCatch({
+               anova(m_null, m_full, test = "LRT")
+             }, error = function(e) NULL)
+             list(
+               test = if (has_day) "Poisson GLM con/ sin interacción (LRT)" else "Poisson GLM",
+               result = summary(m_full),
+               model = m_full,
+               model_null = if (has_day) m_null else NULL,
+               lrt = lrt,
+               formula = f_full,
+               family = "Poisson (log)"
+             )
+           }
+    )
+  }, error = function(e) {
+    list(
+      test = paste("Error en", test_type),
+      result = paste("Error:", e$message),
+      model = NULL,
+      formula = formula_obj
+    )
+  })
+  
+  return(result)
 }

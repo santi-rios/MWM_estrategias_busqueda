@@ -136,8 +136,9 @@ dataInputServer <- function(id, values, parent_session = NULL) {
         
         experiment_data(exp_data)
         values$experiment_data <- exp_data
+        values$track_files_data <- track_files_data()
         
-        showNotification("Archivo de experimento cargado correctamente", type = "success")
+  showNotification("Archivo de experimento cargado correctamente", type = "message")
         
       }, error = function(e) {
         showNotification(paste("Error al cargar archivo:", e$message), type = "error")
@@ -169,9 +170,14 @@ dataInputServer <- function(id, values, parent_session = NULL) {
           directory = track_dir
         ))
         
+        values$track_files_data <- list(
+          files = track_files_info,
+          directory = track_dir
+        )
+        
         showNotification(
           paste("Cargados", length(track_files_info), "archivos de tracks"),
-          type = "success"
+          type = "message"
         )
         
       }, error = function(e) {

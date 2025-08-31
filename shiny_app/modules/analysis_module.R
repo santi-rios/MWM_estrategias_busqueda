@@ -290,13 +290,36 @@ analysisServer <- function(id, values, parent_session = NULL) {
         
         add_to_log("Procesando tracks con Rtrack...")
         
-        # Llamar a la función de procesamiento
-        experiment_result <- process_mwm_experiment(
-          experiment_file = temp_exp_file,
-          data_dir = values$track_files_data$directory,
-          project_dir = temp_dir,
-          threads = threads
-        )
+        # Llamar a la función de procesamiento con mejor manejo de errores
+        experiment_result <- tryCatch({
+          process_mwm_experiment(
+            experiment_file = temp_exp_file,
+            data_dir = values$track_files_data$directory,
+            project_dir = temp_dir,
+            threads = threads
+          )
+        }, error = function(e) {
+          # Proporcionar mensaje más específico según el tipo de error
+          error_msg <- e$message
+          
+          if (grepl("argument is of length zero", error_msg)) {
+            error_msg <- paste("Error de datos vacíos. Posibles causas:",
+                              "- Archivos de tracks vacíos",
+                              "- Nombres de archivos no coinciden con el experimento",
+                              "- Formato de datos incorrecto",
+                              "- Datos faltantes en archivos de tracks", sep = "\n")
+          } else if (grepl("cannot open file", error_msg)) {
+            error_msg <- paste("Error al acceder a archivos:",
+                              "- Verificar que todos los archivos de tracks estén cargados",
+                              "- Comprobar que los nombres coincidan exactamente", sep = "\n")
+          } else if (grepl("Archivos de tracks faltantes", error_msg)) {
+            error_msg <- paste("Algunos archivos de tracks no están disponibles:",
+                              "- La aplicación continuará con los archivos disponibles",
+                              "- Si deseas usar todos los tracks, carga los archivos faltantes", sep = "\n")
+          }
+          
+          stop(error_msg)
+        })
         
         add_to_log("Calculando estrategias de búsqueda...")
         

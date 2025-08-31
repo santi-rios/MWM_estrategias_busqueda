@@ -60,6 +60,59 @@ process_mwm_experiment <- function(experiment_file, data_dir, project_dir = NULL
     threads <- 0  # Usar valor por defecto
   }
   
+  # Leer y validar datos del experimento antes de procesar
+  tryCatch({
+    cat("Leyendo archivo de experimento...\n")
+    exp_data <- readxl::read_excel(experiment_file)
+    
+    # Validar estructura del experimento
+    validate_experiment_structure(exp_data)
+    
+    # Verificar que los archivos de tracks existen
+    track_files <- unique(exp_data$`_TrackFile`)
+    cat("Archivos de tracks esperados:", length(track_files), "\n")
+    
+    missing_files <- c()
+    available_files <- c()
+    
+    for (track_file in track_files) {
+      track_path <- file.path(data_dir, track_file)
+      if (!file.exists(track_path)) {
+        missing_files <- c(missing_files, track_file)
+      } else {
+        # Verificar que el archivo no esté vacío
+        file_size <- file.info(track_path)$size
+        if (file_size == 0) {
+          missing_files <- c(missing_files, paste(track_file, "(vacío)"))
+        } else {
+          available_files <- c(available_files, track_file)
+        }
+      }
+    }
+    
+    # Si faltan archivos, filtrar el experimento para usar solo los disponibles
+    if (length(missing_files) > 0) {
+      cat("Archivos faltantes:", paste(missing_files, collapse = ", "), "\n")
+      cat("Continuando con", length(available_files), "archivos disponibles\n")
+      
+      # Filtrar el experimento para incluir solo tracks disponibles
+      exp_data <- exp_data[exp_data$`_TrackFile` %in% available_files, ]
+      
+      if (nrow(exp_data) == 0) {
+        stop("Ninguno de los archivos de tracks especificados está disponible")
+      }
+      
+      # Guardar el experimento filtrado
+      writexl::write_xlsx(exp_data, experiment_file)
+      cat("Experimento filtrado guardado con", nrow(exp_data), "tracks\n")
+    }
+    
+    cat("Todos los archivos de tracks están presentes.\n")
+    
+  }, error = function(e) {
+    stop(paste("Error en validación previa:", e$message))
+  })
+  
   # Leer experimento con Rtrack
   tryCatch({
     cat("Procesando experimento con parámetros:\n")
@@ -75,6 +128,13 @@ process_mwm_experiment <- function(experiment_file, data_dir, project_dir = NULL
       threads = threads,
       verbose = TRUE
     )
+    
+    # Validar que el experimento se procesó correctamente
+    if (is.null(experiment) || length(experiment$metrics) == 0) {
+      stop("El experimento no se procesó correctamente - no se encontraron métricas")
+    }
+    
+    cat("Experimento procesado exitosamente con", length(experiment$metrics), "tracks.\n")
     
     return(experiment)
     

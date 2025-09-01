@@ -494,99 +494,152 @@ resultsServer <- function(id, values, parent_session = NULL) {
       }
     })
     
-    # Función de filtrado común
+    # FUNCIÓN DE FILTRADO GLOBAL MEJORADA
     filtered_data <- reactive({
       req(values$processed_data)
       data <- values$processed_data
-      
-      # Verificar que tenemos la estructura correcta
+
       if (is.null(data$factors)) {
         showNotification("Error: estructura de datos incorrecta", type = "error")
         return(NULL)
       }
-      
-      # Crear una copia para modificar
+
+      # Preservar toda la estructura y luego filtrar
+      result_data <- data
       filtered_factors <- data$factors
-      
-      # Filtrar por Probe - CORREGIR: filtrar factors, no data directamente
+
+      # Probe: aceptar FALSE o 0 como entrenamiento
       if (input$probe_filter == "Solo entrenamiento (Probe = FALSE)") {
         if ("Probe" %in% names(filtered_factors)) {
-          filtered_factors <- filtered_factors[filtered_factors$Probe == FALSE, ]
-        } else {
-          showNotification("Columna 'Probe' no encontrada en los datos", type = "warning")
+          filtered_factors <- filtered_factors[filtered_factors$Probe == FALSE | filtered_factors$Probe == 0, , drop = FALSE]
         }
       } else if (input$probe_filter == "Solo pruebas (Probe = TRUE)") {
         if ("Probe" %in% names(filtered_factors)) {
-          filtered_factors <- filtered_factors[filtered_factors$Probe == TRUE, ]
-        } else {
-          showNotification("Columna 'Probe' no encontrada en los datos", type = "warning")
+          filtered_factors <- filtered_factors[filtered_factors$Probe == TRUE, , drop = FALSE]
         }
       }
-      
-      # Filtrar por Arena - CORREGIR: usar método más robusto
+
+      # Arena: compatibilidad con/sin .txt
       if (!is.null(input$arena_filter) && length(input$arena_filter) > 0 && input$arena_filter[1] != "") {
         if ("_Arena" %in% names(filtered_factors)) {
-          selected_arenas <- input$arena_filter
-          # Manejar tanto con .txt como sin .txt
-          arena_patterns <- c(selected_arenas, paste0(selected_arenas, ".txt"))
-          filtered_factors <- filtered_factors[filtered_factors$`_Arena` %in% arena_patterns, ]
-        } else {
-          showNotification("Columna '_Arena' no encontrada en los datos", type = "warning")
+          sel <- unique(input$arena_filter)
+          wanted <- unique(c(sel, paste0(sel, ".txt"), sub("\\.txt$", "", sel)))
+          filtered_factors <- filtered_factors[filtered_factors$`_Arena` %in% wanted, , drop = FALSE]
         }
       }
-      
-      # Verificar que quedan datos después del filtrado
+
       if (nrow(filtered_factors) == 0) {
-        showNotification("No hay datos después del filtrado. Revisa los filtros aplicados.", type = "warning")
+        showNotification("No hay datos después del filtrado. Revisa los filtros.", type = "warning")
         return(NULL)
       }
-      
-      # Reconstruir el objeto de datos con factors filtrados
-      result_data <- data
+
+      # Track IDs restantes
+      remaining_ids <- unique(filtered_factors$`_TrackID`)
+
+      # Asignar factors filtrados
       result_data$factors <- filtered_factors
-      
-      # Filtrar metrics si existen, basado en los Track_IDs que quedaron
-      if (!is.null(data$metrics) && "_TrackID" %in% names(data$metrics)) {
-        remaining_track_ids <- unique(filtered_factors$`_TrackID`)
-        result_data$metrics <- data$metrics[data$metrics$`_TrackID` %in% remaining_track_ids, ]
+
+      # Filtrar metrics si existen
+      if (!is.null(result_data$metrics) && "_TrackID" %in% names(result_data$metrics)) {
+        result_data$metrics <- result_data$metrics[result_data$metrics$`_TrackID` %in% remaining_ids, , drop = FALSE]
       }
-      
+
+      # Filtrar paths si existen
+      if (!is.null(result_data$paths)) {
+        if (is.list(result_data$paths)) {
+          # Si paths tiene nombres
+          if (!is.null(names(result_data$paths))) {
+            result_data$paths <- result_data$paths[names(result_data$paths) %in% remaining_ids]
+          } else {
+            # Intentar extraer _TrackID de cada path
+            valid_paths <- list()
+            for (i in seq_along(result_data$paths)) {
+              p <- result_data$paths[[i]]
+              id <- NULL
+              if (!is.null(p$`_TrackID`)) {
+                id <- p$`_TrackID`
+              } else if (!is.null(attr(p, "_TrackID"))) {
+                id <- attr(p, "_TrackID")
+              }
+              if (!is.null(id) && id %in% remaining_ids) {
+                valid_paths[[length(valid_paths) + 1]] <- p
+              }
+            }
+            result_data$paths <- valid_paths
+          }
+        }
+      }
+
+      # Centralizar los filtros para que otros módulos los usen
+      values$filters <- list(
+        probe = input$probe_filter,
+        arenas = input$arena_filter
+      )
+
       return(result_data)
     })
     
     # Generar mapas de densidad
     observeEvent(input$generate_density_maps, {
-      req(filtered_data(), input$density_grouping, input$density_days)
-      
+      req(input$density_grouping)
+
       tryCatch({
-        # Usar mensaje para máxima compatibilidad
         showNotification("Generando mapas de densidad...", type = "message")
         
-        # Verificar que filtered_data() no es NULL antes de usarlo
+        # Obtener datos filtrados
         filtered_dataset <- filtered_data()
         if (is.null(filtered_dataset)) {
           showNotification("No hay datos disponibles después del filtrado", type = "warning")
           return()
         }
         
-        plots <- create_density_maps(
+        # Verificar existencia de paths (debug)
+        if (is.null(filtered_dataset$paths)) {
+          showNotification("No se encontraron paths en los datos filtrados", type = "error")
+          return()
+        }
+        
+        # Verificar si paths está vacío (debug)
+        if (is.list(filtered_dataset$paths) && length(filtered_dataset$paths) == 0) {
+          showNotification("La lista de paths está vacía", type = "error")
+          return()
+        }
+        
+        # Imprimir información para debug
+        cat("Paths encontrados:", length(filtered_dataset$paths), "\n")
+        cat("Estructura de paths:", class(filtered_dataset$paths), "\n")
+        if (is.list(filtered_dataset$paths)) {
+          cat("Nombres de paths:", head(names(filtered_dataset$paths)), "\n")
+        }
+        
+        # Intentar generar los mapas
+        plots_result <- create_density_maps(
           experiment_data = filtered_dataset,
           grouping_var = input$density_grouping,
-          days_filter = input$density_days,
-          arena_filter = input$density_arenas,
           color_palette = input$color_palette,
           resolution = input$resolution,
           color_levels = input$color_levels,
-          show_legend = input$show_legend
+          show_legend = input$show_legend,
+          overlay_goals = FALSE  # No dibujar old.goal
         )
         
-        density_maps(plots)
-        values$density_plots <- plots
+        # Verificar resultado
+        if (is.null(plots_result)) {
+          showNotification("Error: resultado NULL en create_density_maps", type = "error")
+          return()
+        } else if (is.character(plots_result)) {
+          showNotification(paste("Error:", plots_result), type = "error")
+          return()
+        }
+        
+        # Todo bien, actualizar los mapas
+        density_maps(plots_result)
+        values$density_plots <- plots_result
         
         showNotification("Mapas de densidad generados correctamente", type = "message")
       }, error = function(e) {
         showNotification(paste("Error generando mapas:", e$message), type = "error")
-        print(paste("Debug - Error completo:", e))  # Para debugging
+        print(paste("Debug - Error completo:", as.character(e)))
       })
     })    # Generar análisis de estrategias
     observeEvent(input$generate_strategy_analysis, {

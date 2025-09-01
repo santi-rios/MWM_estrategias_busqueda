@@ -605,7 +605,12 @@ resultsServer <- function(id, values, parent_session = NULL) {
     # Renderizar plots
     output$density_plots <- renderPlot({
       req(density_maps())
-      density_maps()
+      obj <- density_maps()
+      if (is.function(obj)) {
+        obj()
+      } else {
+        print(obj)
+      }
     })
     
     output$strategy_plots <- renderPlot({

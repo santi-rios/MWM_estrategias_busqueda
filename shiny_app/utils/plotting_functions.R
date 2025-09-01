@@ -364,41 +364,33 @@ create_comprehensive_analysis <- function(results_data, variable, grouping_var,
     y_label <- variable
   }
   
-  # Preparar datos para el gráfico
+  # Preparar datos para el gráfico con columnas seguras (evita problemas con nombres no sintácticos)
   day_col <- names(results_data)[grepl("^_Day", names(results_data))][1]
-  
-  if (!is.null(day_col)) {
+  results_data$YVar <- results_data[[variable]]
+  results_data$GroupVar <- results_data[[grouping_var]]
+  has_day <- !is.null(day_col)
+  if (has_day) {
+    results_data$DayVar <- results_data[[day_col]]
     # Gráfico con días como eje X
-    p <- ggplot2::ggplot(results_data, 
-                        ggplot2::aes_string(x = day_col, y = variable, 
-                                           color = grouping_var, fill = grouping_var))
-    
+    p <- ggplot2::ggplot(results_data, ggplot2::aes(x = DayVar, y = YVar, color = GroupVar, fill = GroupVar))
     if (show_error_bars) {
       p <- p + ggplot2::stat_summary(fun = mean, geom = "point", size = 3, position = ggplot2::position_dodge(0.3)) +
-               ggplot2::stat_summary(fun = mean, geom = "line", size = 1, position = ggplot2::position_dodge(0.3), 
-                                    ggplot2::aes_string(group = grouping_var)) +
-               ggplot2::stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, 
-                                    position = ggplot2::position_dodge(0.3))
+               ggplot2::stat_summary(fun = mean, geom = "line", size = 1, position = ggplot2::position_dodge(0.3), ggplot2::aes(group = GroupVar)) +
+               ggplot2::stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, position = ggplot2::position_dodge(0.3))
     } else {
       p <- p + ggplot2::stat_summary(fun = mean, geom = "point", size = 3, position = ggplot2::position_dodge(0.3)) +
-               ggplot2::stat_summary(fun = mean, geom = "line", size = 1, position = ggplot2::position_dodge(0.3),
-                                    ggplot2::aes_string(group = grouping_var))
+               ggplot2::stat_summary(fun = mean, geom = "line", size = 1, position = ggplot2::position_dodge(0.3), ggplot2::aes(group = GroupVar))
     }
-    
     p <- p + ggplot2::labs(x = "Día", y = y_label, color = grouping_var, fill = grouping_var)
-    
   } else {
     # Gráfico de barras simple sin días
-    p <- ggplot2::ggplot(results_data, 
-                        ggplot2::aes_string(x = grouping_var, y = variable, fill = grouping_var))
-    
+    p <- ggplot2::ggplot(results_data, ggplot2::aes(x = GroupVar, y = YVar, fill = GroupVar))
     if (show_error_bars) {
       p <- p + ggplot2::stat_summary(fun = mean, geom = "bar", alpha = 0.7) +
                ggplot2::stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2)
     } else {
       p <- p + ggplot2::stat_summary(fun = mean, geom = "bar", alpha = 0.7)
     }
-    
     p <- p + ggplot2::labs(x = grouping_var, y = y_label, fill = grouping_var)
   }
   

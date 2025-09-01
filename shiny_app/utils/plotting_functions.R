@@ -118,50 +118,24 @@ create_density_maps <- function(experiment_data, grouping_var, days_filter = NUL
 }
 
 # Función para crear análisis de estrategias
-create_strategy_analysis <- function(strategies_data, experiment_data, grouping_var,
-                                   days_filter = NULL, show_individual = FALSE) {
+create_strategy_analysis <- function(data, grouping_var, days_filter = NULL, 
+                                   probe_filter = NULL, arena_filter = NULL) {
   
-  # Combinar datos
-  factors_df <- experiment_data$factors
-  strategies_df <- strategies_data$calls
-  
-  # Merge datos
-  if ("_TrackID" %in% names(factors_df)) {
-    if (!"Track_ID" %in% names(strategies_df)) {
-      strategies_df$Track_ID <- rownames(strategies_df)
-    }
-    merged_data <- merge(factors_df, strategies_df, 
-                        by.x = "_TrackID", by.y = "Track_ID", all = TRUE)
-  } else {
-    merged_data <- cbind(factors_df, strategies_df)
+  # Aplicar filtros
+  if (!is.null(probe_filter) && probe_filter != "Todos") {
+    probe_value <- probe_filter == "Solo pruebas (Probe = TRUE)"
+    data <- data[data$Probe == probe_value, ]
   }
   
-  # Filtrar por días
-  if (!is.null(days_filter)) {
-    day_col <- names(merged_data)[grepl("^_Day", names(merged_data))][1]
-    if (!is.null(day_col)) {
-      merged_data <- merged_data[merged_data[[day_col]] %in% days_filter, ]
-    }
+  if (!is.null(arena_filter) && length(arena_filter) > 0 && arena_filter[1] != "") {
+    selected_arenas <- arena_filter
+    selected_arenas_pattern <- paste0(paste0(selected_arenas, 
+                                           ifelse(grepl("\\.txt$", selected_arenas), "", ".txt")),
+                                     collapse = "|")
+    data <- data[grepl(selected_arenas_pattern, data$`_Arena`), ]
   }
   
-  # Clasificar estrategias
-  merged_data <- classify_strategies_for_plot(merged_data)
-  
-  # Crear gráfico de estrategias
-  if (show_individual) {
-    plot_obj <- create_individual_strategy_plot(merged_data, grouping_var)
-  } else {
-    plot_obj <- create_grouped_strategy_plot(merged_data, grouping_var)
-  }
-  
-  # Análisis estadístico básico
-  stats_results <- perform_strategy_statistics(merged_data, grouping_var)
-  
-  return(list(
-    plots = plot_obj,
-    stats = stats_results,
-    data = merged_data
-  ))
+  # Continuar con el procesamiento...
 }
 
 # Función para clasificar estrategias para plotting

@@ -383,3 +383,46 @@ create_example_experiment <- function() {
   
   return(example_data)
 }
+
+# En perform_statistical_analysis
+perform_statistical_analysis <- function(data, variable, grouping_var, test_type,
+                                       probe_filter = NULL, arena_filter = NULL) {
+  
+  # Aplicar filtros si existen
+  if (!is.null(probe_filter) && probe_filter != "Todos") {
+    probe_value <- probe_filter == "Solo pruebas (Probe = TRUE)"
+    data <- data[data$Probe == probe_value, ]
+  }
+  
+  if (!is.null(arena_filter) && length(arena_filter) > 0 && arena_filter[1] != "") {
+    selected_arenas <- arena_filter
+    data <- data[data$`_Arena` %in% selected_arenas, ]
+  }
+  
+  # Para modelos que incluyen arena como factor
+  if (test_type == "Poisson GLM (log, LRT interacción)") {
+    has_arena <- "_Arena" %in% colnames(data)
+    has_day <- "_Day" %in% colnames(data)
+    
+    # Formula base
+    if (has_arena) {
+      # Incluir Arena como factor si existe
+      formula_str <- sprintf("%s ~ %s + `_Arena`", variable, grouping_var)
+      formula_interaction <- sprintf("%s ~ %s * `_Arena`", variable, grouping_var)
+      
+      if (has_day) {
+        # Incluir día e interacciones
+        formula_str <- sprintf("%s + `_Day`", formula_str)
+        formula_interaction <- sprintf("%s * `_Day` + `_Arena` * `_Day`", formula_interaction)
+      }
+    } else {
+      # Fórmula normal
+      formula_str <- sprintf("%s ~ %s", variable, grouping_var)
+      if (has_day) {
+        formula_interaction <- sprintf("%s ~ %s * `_Day`", variable, grouping_var)
+      }
+    }
+    
+    # Continuar con los modelos...
+  }
+}

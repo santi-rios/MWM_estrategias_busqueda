@@ -68,6 +68,8 @@ analysisUI <- function(id) {
           tags$li(tags$b("Día:"), " variable temporal (p.ej., _Day) para análisis longitudinal.")
         ),
         
+        # Este panel ya no necesita mostrar el estado de los filtros globales
+        # porque este módulo ya no los aplica.
         conditionalPanel(
           condition = paste0("output['", ns("experiment_ready"), "']"),
           
@@ -238,10 +240,10 @@ analysisServer <- function(id, values, parent_session = NULL) {
       
       updateSelectInput(session, "day_variable",
                        choices = system_choices,
-                       selected = "_Day")
+                       selected = if ("_Day" %in% system_choices) "_Day" else NULL)
     })
     
-    # Iniciar análisis
+    # Iniciar análisis - ESTE ES EL ÚNICO BLOQUE QUE EJECUTA EL ANÁLISIS
     observeEvent(input$start_analysis, {
       req(values$experiment_data, values$arena_config, values$track_files_data)
       
@@ -295,16 +297,16 @@ analysisServer <- function(id, values, parent_session = NULL) {
           }
           file.copy(src, file.path(temp_dir, fname), overwrite = TRUE)
         }
-        add_to_log(paste("Arenas listas:", paste(arenas_required_files, collapse = ", ")))        
+        add_to_log(paste("Arenas listas:", paste(unique(arenas_required_files), collapse = ", ")))        
         
         add_to_log("Procesando tracks con Rtrack...")
         
         # Llamar a la función de procesamiento con mejor manejo de errores
         experiment_result <- tryCatch({
-          process_mwm_experiment(
-            experiment_file = temp_exp_file,
-            data_dir = values$track_files_data$directory,
-            project_dir = temp_dir,
+          Rtrack::read_experiment(
+            file = temp_exp_file,
+            data.dir = values$track_files_data$directory,
+            project.dir = temp_dir,
             threads = threads
           )
         }, error = function(e) {
@@ -312,19 +314,9 @@ analysisServer <- function(id, values, parent_session = NULL) {
           error_msg <- e$message
           
           if (grepl("argument is of length zero", error_msg)) {
-            error_msg <- paste("Error de datos vacíos. Posibles causas:",
-                              "- Archivos de tracks vacíos",
-                              "- Nombres de archivos no coinciden con el experimento",
-                              "- Formato de datos incorrecto",
-                              "- Datos faltantes en archivos de tracks", sep = "\n")
+            error_msg <- paste("Error de datos vacíos. Posibles causas:\n- Archivos de tracks vacíos\n- Nombres de archivos no coinciden con el experimento\n- Formato de datos incorrecto")
           } else if (grepl("cannot open file", error_msg)) {
-            error_msg <- paste("Error al acceder a archivos:",
-                              "- Verificar que todos los archivos de tracks estén cargados",
-                              "- Comprobar que los nombres coincidan exactamente", sep = "\n")
-          } else if (grepl("Archivos de tracks faltantes", error_msg)) {
-            error_msg <- paste("Algunos archivos de tracks no están disponibles:",
-                              "- La aplicación continuará con los archivos disponibles",
-                              "- Si deseas usar todos los tracks, carga los archivos faltantes", sep = "\n")
+            error_msg <- paste("Error al acceder a archivos:\n- Verificar que todos los archivos de tracks estén cargados\n- Comprobar que los nombres coincidan exactamente")
           }
           
           stop(error_msg)
@@ -338,21 +330,21 @@ analysisServer <- function(id, values, parent_session = NULL) {
         # Aplicar umbral si está activado
         if (input$threshold_strategies) {
           add_to_log(paste("Aplicando umbral de confianza:", input$confidence_threshold))
-          strategies <- Rtrack::threshold_strategies(strategies, input$confidence_threshold)
+          strategies <- Rtrack::threshold_strategies(strategies, threshold = input$confidence_threshold)
         }
         
         add_to_log("Procesando datos para análisis estadístico...")
         
-        # Procesar datos para análisis
-        processed_data <- process_strategy_data(
-          experiment_result,
-          strategies,
-          grouping_vars = input$grouping_variables,
-          treatment_var = input$treatment_variable,
-          day_var = input$day_variable
+        # Procesar datos para análisis (exportación)
+        # NOTA: Esta función es de Rtrack y prepara un data.frame para exportar.
+        # No es un filtro, sino una preparación de datos.
+        processed_data <- Rtrack::get_results(
+          experiment = experiment_result,
+          strategies = strategies,
+          add_factors = input$grouping_variables
         )
         
-        # Guardar resultados
+        # Guardar resultados en el reactiveVal local
         results_data(list(
           experiment = experiment_result,
           strategies = strategies,
@@ -366,16 +358,16 @@ analysisServer <- function(id, values, parent_session = NULL) {
           )
         ))
         
-        # Pasar resultados a values globales
+        # Pasar resultados a values globales para que otros módulos los usen
         values$processed_data <- experiment_result
         values$strategies <- strategies
-        values$analysis_config <- processed_data
+        values$analysis_config <- list(results_export = processed_data) # Guardar el data.frame exportado
         values$processing_complete <- TRUE
         
         add_to_log("✅ Análisis completado exitosamente!")
         analysis_complete(TRUE)
         
-  showNotification("Análisis completado correctamente", type = "message", duration = 5)
+        showNotification("Análisis completado correctamente", type = "message", duration = 5)
         
       }, error = function(e) {
         add_to_log(paste("❌ Error:", e$message))
@@ -408,473 +400,32 @@ analysisServer <- function(id, values, parent_session = NULL) {
     
     # Resúmenes de resultados
     output$total_tracks <- renderText({
-      if (!is.null(results_data())) {
-        length(results_data()$experiment$metrics)
-      } else {
-        "0"
-      }
+      req(results_data())
+      length(results_data()$experiment$metrics)
     })
     
     output$total_subjects <- renderText({
-      if (!is.null(results_data())) {
-        length(unique(results_data()$experiment$factors$`_TargetID`))
-      } else {
-        "0"
-      }
+      req(results_data())
+      length(unique(results_data()$experiment$factors$`_TargetID`))
     })
     
     output$total_days <- renderText({
-      if (!is.null(results_data())) {
-        length(unique(results_data()$experiment$factors$`_Day`))
-      } else {
-        "0"
-      }
+      req(results_data())
+      length(unique(results_data()$experiment$factors$`_Day`))
     })
     
     output$strategy_accuracy <- renderText({
-      if (!is.null(results_data())) {
-        avg_confidence <- mean(results_data()$strategies$calls$confidence, na.rm = TRUE)
-        paste0(round(avg_confidence * 100, 1), "%")
-      } else {
-        "0%"
-      }
+      req(results_data())
+      avg_confidence <- mean(results_data()$strategies$calls$confidence, na.rm = TRUE)
+      paste0(round(avg_confidence * 100, 1), "%")
     })
     
     # Botón para ver resultados
     observeEvent(input$view_results, {
-      if (!is.null(parent_session)) {
-        shinydashboard::updateTabItems(parent_session, "tabs", "results")
-      } else {
-        shinydashboard::updateTabItems(session$parent, "tabs", "results")
-      }
+      updateTabItems(parent_session, "tabs", "results")
     })
-    
-    observeEvent(input$run_analysis, {
-      req(values$experiment_data, values$arena_config)
-      
-      # Verificar si hay filtros globales y aplicarlos
-      apply_global_filters <- !is.null(values$filters)
-      
-      tryCatch({
-        showNotification("Analizando datos...", type = "message", duration = NULL, id = "analysis_notification")
-        
-        # Copiar los datos para no modificar el original reactivo
-        experiment_data <- values$experiment_data
-        
-        # Asegurarnos de que los archivos de arena requeridos existen en project_dir
-        arenas_needed <- unique(na.omit(experiment_data$`_Arena`))
-        if (length(arenas_needed) == 0) {
-          stop("El experimento no especifica ninguna arena en la columna _Arena")
-        }
 
-        # Crear un directorio temporal para los archivos de análisis
-        temp_dir <- tempfile(pattern = "mwm_analysis_")
-        dir.create(temp_dir)
-        
-        # Crear archivo temporal del experimento en el directorio temporal
-        temp_exp_file <- file.path(temp_dir, "experiment_data.xlsx")
-        writexl::write_xlsx(experiment_data, temp_exp_file)
-        
-        # Copiar todos los archivos de arena requeridos al directorio del proyecto
-        add_to_log("Preparando archivos de arena...")
-        if (is.null(values$arena_config) || is.null(values$arena_config$files)) {
-          stop("No hay archivos de arena disponibles. Genera o sube los .txt en la pestaña 'Configurar Arena'.")
-        }
-        arena_files_map <- values$arena_config$files
-        # Normalizar nombres requeridos a 'BaseName.txt'
-        arenas_required_files <- vapply(arenas_needed, function(a) {
-          nm <- if (grepl("\\.txt$", a)) a else paste0(a, ".txt")
-          sub("^.*/", "", nm)
-        }, character(1))
-        # Verificar disponibilidad y copiar
-        for (fname in arenas_required_files) {
-          src <- arena_files_map[[fname]]
-          if (is.null(src) || !file.exists(src)) {
-            stop(paste0("Falta el archivo de arena requerido: ", fname, ". Genera o sube este archivo."))
-          }
-          file.copy(src, file.path(temp_dir, fname), overwrite = TRUE)
-        }
-        add_to_log(paste("Arenas listas:", paste(arenas_required_files, collapse = ", ")))        
-        
-        # Después de leer los datos pero antes de procesarlos:
-        if (apply_global_filters) {
-          # Aplicar filtros globales desde values$filters
-          if (values$filters$probe != "Todos") {
-            if (values$filters$probe == "Solo entrenamiento (Probe = FALSE)") {
-              experiment_data$factors <- experiment_data$factors[
-                experiment_data$factors$Probe == FALSE | experiment_data$factors$Probe == 0, ]
-            } else if (values$filters$probe == "Solo pruebas (Probe = TRUE)") {
-              experiment_data$factors <- experiment_data$factors[experiment_data$factors$Probe == TRUE, ]
-            }
-          }
-          
-          if (!is.null(values$filters$arenas) && length(values$filters$arenas) > 0 && values$filters$arenas[1] != "") {
-            sel_arenas <- values$filters$arenas
-            wanted_arenas <- unique(c(sel_arenas, paste0(sel_arenas, ".txt"), sub("\\.txt$", "", sel_arenas)))
-            experiment_data$factors <- experiment_data$factors[
-              experiment_data$factors$`_Arena` %in% wanted_arenas, ]
-          }
-          
-          # Si no quedan datos después del filtrado
-          if (nrow(experiment_data$factors) == 0) {
-            showNotification("No hay datos después de aplicar los filtros globales", 
-                             type = "warning", duration = 5)
-            removeNotification(id = "analysis_notification")
-            return()
-          }
-        }
-        
-        # Procesar tracks con Rtrack...
-        add_to_log("Procesando tracks con Rtrack...")
-        
-        # Llamar a la función de procesamiento con mejor manejo de errores
-        experiment_result <- tryCatch({
-          process_mwm_experiment(
-            experiment_file = temp_exp_file,
-            data_dir = values$track_files_data$directory,
-            project_dir = temp_dir,
-            threads = 1
-          )
-        }, error = function(e) {
-          # Proporcionar mensaje más específico según el tipo de error
-          error_msg <- e$message
-          
-          if (grepl("argument is of length zero", error_msg)) {
-            error_msg <- paste("Error de datos vacíos. Posibles causas:",
-                              "- Archivos de tracks vacíos",
-                              "- Nombres de archivos no coinciden con el experimento",
-                              "- Formato de datos incorrecto",
-                              "- Datos faltantes en archivos de tracks", sep = "\n")
-          } else if (grepl("cannot open file", error_msg)) {
-            error_msg <- paste("Error al acceder a archivos:",
-                              "- Verificar que todos los archivos de tracks estén cargados",
-                              "- Comprobar que los nombres coincidan exactamente", sep = "\n")
-          } else if (grepl("Archivos de tracks faltantes", error_msg)) {
-            error_msg <- paste("Algunos archivos de tracks no están disponibles:",
-                              "- La aplicación continuará con los archivos disponibles",
-                              "- Si deseas usar todos los tracks, carga los archivos faltantes", sep = "\n")
-          }
-          
-          stop(error_msg)
-        })
-        
-        add_to_log("Calculando estrategias de búsqueda...")
-        
-        # Calcular estrategias
-        strategies <- Rtrack::call_strategy(experiment_result)
-        
-        # Aplicar umbral si está activado
-        if (input$threshold_strategies) {
-          add_to_log(paste("Aplicando umbral de confianza:", input$confidence_threshold))
-          strategies <- Rtrack::threshold_strategies(strategies, input$confidence_threshold)
-        }
-        
-        add_to_log("Procesando datos para análisis estadístico...")
-        
-        # Procesar datos para análisis
-        processed_data <- process_strategy_data(
-          experiment_result,
-          strategies,
-          grouping_vars = input$grouping_variables,
-          treatment_var = input$treatment_variable,
-          day_var = input$day_variable
-        )
-        
-        # Guardar resultados
-        results_data(list(
-          experiment = experiment_result,
-          strategies = strategies,
-          processed_data = processed_data,
-          config = list(
-            grouping_vars = input$grouping_variables,
-            treatment_var = input$treatment_variable,
-            day_var = input$day_variable,
-            threshold = input$threshold_strategies,
-            confidence = input$confidence_threshold
-          )
-        ))
-        
-        # Pasar resultados a values globales
-        values$processed_data <- experiment_result
-        values$strategies <- strategies
-        values$analysis_config <- processed_data
-        values$processing_complete <- TRUE
-        
-        add_to_log("✅ Análisis completado exitosamente!")
-        analysis_complete(TRUE)
-        
-  showNotification("Análisis completado correctamente", type = "message", duration = 5)
-        
-      }, error = function(e) {
-        add_to_log(paste("❌ Error:", e$message))
-        showNotification(paste("Error en análisis:", e$message), type = "error", duration = 10)
-      }, finally = {
-        analysis_running(FALSE)
-      })
-    })
+    # SE HAN ELIMINADO LOS BLOQUES DUPLICADOS Y LA LÓGICA DE FILTRADO INCORRECTA
     
-    # Outputs de estado
-    output$analysis_running <- reactive({
-      analysis_running()
-    })
-    outputOptions(output, "analysis_running", suspendWhenHidden = FALSE)
-    
-    output$analysis_complete <- reactive({
-      analysis_complete()
-    })
-    outputOptions(output, "analysis_complete", suspendWhenHidden = FALSE)
-    
-    output$processing_log <- renderText({
-      processing_log()
-    })
-    
-    output$progress_text <- renderText({
-      if (analysis_running()) {
-        "Procesando datos..."
-      }
-    })
-    
-    # Resúmenes de resultados
-    output$total_tracks <- renderText({
-      if (!is.null(results_data())) {
-        length(results_data()$experiment$metrics)
-      } else {
-        "0"
-      }
-    })
-    
-    output$total_subjects <- renderText({
-      if (!is.null(results_data())) {
-        length(unique(results_data()$experiment$factors$`_TargetID`))
-      } else {
-        "0"
-      }
-    })
-    
-    output$total_days <- renderText({
-      if (!is.null(results_data())) {
-        length(unique(results_data()$experiment$factors$`_Day`))
-      } else {
-        "0"
-      }
-    })
-    
-    output$strategy_accuracy <- renderText({
-      if (!is.null(results_data())) {
-        avg_confidence <- mean(results_data()$strategies$calls$confidence, na.rm = TRUE)
-        paste0(round(avg_confidence * 100, 1), "%")
-      } else {
-        "0%"
-      }
-    })
-    
-    # Botón para ver resultados
-    observeEvent(input$view_results, {
-      if (!is.null(parent_session)) {
-        shinydashboard::updateTabItems(parent_session, "tabs", "results")
-      } else {
-        shinydashboard::updateTabItems(session$parent, "tabs", "results")
-      }
-    })
-    
-    observeEvent(input$run_analysis, {
-      req(values$experiment_data, values$arena_config)
-      
-      # Verificar si hay filtros globales y aplicarlos
-      apply_global_filters <- !is.null(values$filters)
-      
-      tryCatch({
-        showNotification("Analizando datos...", type = "message", duration = NULL, id = "analysis_notification")
-        
-        # Copiar los datos para no modificar el original reactivo
-        experiment_data <- values$experiment_data
-        
-        # Asegurarnos de que los archivos de arena requeridos existen en project_dir
-        arenas_needed <- unique(na.omit(experiment_data$`_Arena`))
-        if (length(arenas_needed) == 0) {
-          stop("El experimento no especifica ninguna arena en la columna _Arena")
-        }
-
-        # Crear un directorio temporal para los archivos de análisis
-        temp_dir <- tempfile(pattern = "mwm_analysis_")
-        dir.create(temp_dir)
-        
-        # Crear archivo temporal del experimento en el directorio temporal
-        temp_exp_file <- file.path(temp_dir, "experiment_data.xlsx")
-        writexl::write_xlsx(experiment_data, temp_exp_file)
-        
-        # Copiar todos los archivos de arena requeridos al directorio del proyecto
-        add_to_log("Preparando archivos de arena...")
-        if (is.null(values$arena_config) || is.null(values$arena_config$files)) {
-          stop("No hay archivos de arena disponibles. Genera o sube los .txt en la pestaña 'Configurar Arena'.")
-        }
-        arena_files_map <- values$arena_config$files
-        # Normalizar nombres requeridos a 'BaseName.txt'
-        arenas_required_files <- vapply(arenas_needed, function(a) {
-          nm <- if (grepl("\\.txt$", a)) a else paste0(a, ".txt")
-          sub("^.*/", "", nm)
-        }, character(1))
-        # Verificar disponibilidad y copiar
-        for (fname in arenas_required_files) {
-          src <- arena_files_map[[fname]]
-          if (is.null(src) || !file.exists(src)) {
-            stop(paste0("Falta el archivo de arena requerido: ", fname, ". Genera o sube este archivo."))
-          }
-          file.copy(src, file.path(temp_dir, fname), overwrite = TRUE)
-        }
-        add_to_log(paste("Arenas listas:", paste(arenas_required_files, collapse = ", ")))        
-        
-        # Después de leer los datos pero antes de procesarlos:
-        if (apply_global_filters) {
-          # Aplicar filtros globales desde values$filters
-          if (values$filters$probe != "Todos") {
-            if (values$filters$probe == "Solo entrenamiento (Probe = FALSE)") {
-              experiment_data$factors <- experiment_data$factors[
-                experiment_data$factors$Probe == FALSE | experiment_data$factors$Probe == 0, ]
-            } else if (values$filters$probe == "Solo pruebas (Probe = TRUE)") {
-              experiment_data$factors <- experiment_data$factors[experiment_data$factors$Probe == TRUE, ]
-            }
-          }
-          
-          if (!is.null(values$filters$arenas) && length(values$filters$arenas) > 0 && values$filters$arenas[1] != "") {
-            sel_arenas <- values$filters$arenas
-            wanted_arenas <- unique(c(sel_arenas, paste0(sel_arenas, ".txt"), sub("\\.txt$", "", sel_arenas)))
-            experiment_data$factors <- experiment_data$factors[
-              experiment_data$factors$`_Arena` %in% wanted_arenas, ]
-          }
-          
-          # Si no quedan datos después del filtrado
-          if (nrow(experiment_data$factors) == 0) {
-            showNotification("No hay datos después de aplicar los filtros globales", 
-                             type = "warning", duration = 5)
-            removeNotification(id = "analysis_notification")
-            return()
-          }
-        }
-        
-        # Procesar tracks con Rtrack...
-        add_to_log("Procesando tracks con Rtrack...")
-        
-        # Llamar a la función de procesamiento con mejor manejo de errores
-        experiment_result <- tryCatch({
-          process_mwm_experiment(
-            experiment_file = temp_exp_file,
-            data_dir = values$track_files_data$directory,
-            project_dir = temp_dir,
-            threads = 1
-          )
-        }, error = function(e) {
-          # Proporcionar mensaje más específico según el tipo de error
-          error_msg <- e$message
-          
-          if (grepl("argument is of length zero", error_msg)) {
-            error_msg <- paste("Error de datos vacíos. Posibles causas:",
-                              "- Archivos de tracks vacíos",
-                              "- Nombres de archivos no coinciden con el experimento",
-                              "- Formato de datos incorrecto",
-                              "- Datos faltantes en archivos de tracks", sep = "\n")
-          } else if (grepl("cannot open file", error_msg)) {
-            error_msg <- paste("Error al acceder a archivos:",
-                              "- Verificar que todos los archivos de tracks estén cargados",
-                              "- Comprobar que los nombres coincidan exactamente", sep = "\n")
-          } else if (grepl("Archivos de tracks faltantes", error_msg)) {
-            error_msg <- paste("Algunos archivos de tracks no están disponibles:",
-                              "- La aplicación continuará con los archivos disponibles",
-                              "- Si deseas usar todos los tracks, carga los archivos faltantes", sep = "\n")
-          }
-          
-          stop(error_msg)
-        })
-        
-        add_to_log("Calculando estrategias de búsqueda...")
-        
-        # Calcular estrategias
-        strategies <- Rtrack::call_strategy(experiment_result)
-        
-        # Aplicar umbral si está activado
-        if (input$threshold_strategies) {
-          add_to_log(paste("Aplicando umbral de confianza:", input$confidence_threshold))
-          strategies <- Rtrack::threshold_strategies(strategies, input$confidence_threshold)
-        }
-        
-        add_to_log("Procesando datos para análisis estadístico...")
-        
-        # Procesar datos para análisis
-        processed_data <- process_strategy_data(
-          experiment_result,
-          strategies,
-          grouping_vars = input$grouping_variables,
-          treatment_var = input$treatment_variable,
-          day_var = input$day_variable
-        )
-        
-        # Guardar resultados
-        results_data(list(
-          experiment = experiment_result,
-          strategies = strategies,
-          processed_data = processed_data,
-          config = list(
-            grouping_vars = input$grouping_variables,
-            treatment_var = input$treatment_variable,
-            day_var = input$day_variable,
-            threshold = input$threshold_strategies,
-            confidence = input$confidence_threshold
-          )
-        ))
-        
-        # Pasar resultados a values globales
-        values$processed_data <- experiment_result
-        values$strategies <- strategies
-        values$analysis_config <- processed_data
-        values$processing_complete <- TRUE
-        
-        add_to_log("✅ Análisis completado exitosamente!")
-        analysis_complete(TRUE)
-        
-  showNotification("Análisis completado correctamente", type = "message", duration = 5)
-        
-      }, error = function(e) {
-        add_to_log(paste("❌ Error:", e$message))
-        showNotification(paste("Error en análisis:", e$message), type = "error", duration = 10)
-      }, finally = {
-        analysis_running(FALSE)
-      })
-    })
-    
-    # Filtros globales
-    output$global_filters_active <- reactive({
-      !is.null(values$filters) && 
-        (values$filters$probe != "Todos" || 
-         (!is.null(values$filters$arenas) && length(values$filters$arenas) > 0 && values$filters$arenas[1] != ""))
-    })
-    outputOptions(output, "global_filters_active", suspendWhenHidden = FALSE)
-    
-    output$global_filter_status <- renderUI({
-      req(values$filters)
-      filter_text <- NULL
-      
-      if (values$filters$probe != "Todos") {
-        filter_text <- c(filter_text, paste("Fase:", 
-          switch(values$filters$probe,
-                 "Solo entrenamiento (Probe = FALSE)" = "Entrenamiento",
-                 "Solo pruebas (Probe = TRUE)" = "Pruebas",
-                 values$filters$probe)))
-      }
-      
-      if (!is.null(values$filters$arenas) && length(values$filters$arenas) > 0 && values$filters$arenas[1] != "") {
-        filter_text <- c(filter_text, paste("Arena(s):", paste(values$filters$arenas, collapse=", ")))
-      }
-      
-      if (length(filter_text) > 0) {
-        tags$div(
-          class = "alert alert-warning",
-          style = "margin-top: 10px;",
-          icon("exclamation-triangle"), 
-          HTML("<strong>Filtros globales activos:</strong> "), 
-          paste(filter_text, collapse=" | "),
-          p("Los datos serán filtrados según estos criterios antes del análisis.")
-        )
-      }
-    })
   })
 }

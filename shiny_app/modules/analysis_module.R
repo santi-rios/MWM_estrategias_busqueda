@@ -37,7 +37,7 @@ analysisUI <- function(id) {
         
         h4("Configuración de Estrategias"),
         
-        fluidRow(
+  fluidRow(
           column(6,
             checkboxInput(ns("threshold_strategies"),
                          "Aplicar umbral de confianza",
@@ -55,11 +55,18 @@ analysisUI <- function(id) {
             )
           )
         ),
+  tags$p(style="font-size:12px; color:#555; margin-top:-8px;",
+         "El clasificador Rtrack devuelve una confianza por track. Usa el umbral para ocultar llamadas poco claras (p.ej., 0.4)."),
         
         hr(),
         
         h4("Configuración de Grupos"),
         p("Define cómo agrupar tus datos para el análisis."),
+        tags$ul(style="font-size:12px; color:#555;",
+          tags$li(tags$b("Agrupar por:"), " factor principal para comparar (p.ej., Grupo, Sexo)."),
+          tags$li(tags$b("Tratamiento:"), " factor clave que se guarda para análisis/exports (puede coincidir con 'Agrupar por')."),
+          tags$li(tags$b("Día:"), " variable temporal (p.ej., _Day) para análisis longitudinal.")
+        ),
         
         conditionalPanel(
           condition = paste0("output['", ns("experiment_ready"), "']"),

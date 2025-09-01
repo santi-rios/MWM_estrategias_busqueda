@@ -483,11 +483,8 @@ resultsServer <- function(id, values, parent_session = NULL) {
     })    # Generar análisis de estrategias
     observeEvent(input$generate_strategy_analysis, {
       req(values$strategies, input$strategy_grouping, input$strategy_days)
-      
       tryCatch({
-  showNotification("Generando análisis de estrategias...", type = "message")
-        
-        # Crear análisis de estrategias
+        showNotification("Generando análisis de estrategias...", type = "message")
         results <- create_strategy_analysis(
           strategies_data = values$strategies,
           experiment_data = values$processed_data,
@@ -495,14 +492,11 @@ resultsServer <- function(id, values, parent_session = NULL) {
           days_filter = input$strategy_days,
           show_individual = input$show_individual_strategies
         )
-        
         strategy_plots(results$plots)
         statistical_results(results$stats)
         values$strategy_plots <- results$plots
         values$statistical_results <- results$stats
-        
-  showNotification("Análisis de estrategias generado correctamente", type = "message")
-        
+        showNotification("Análisis de estrategias generado correctamente", type = "message")
       }, error = function(e) {
         showNotification(paste("Error generando análisis:", e$message), type = "error")
       })

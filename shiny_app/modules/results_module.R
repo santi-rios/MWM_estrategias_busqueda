@@ -25,30 +25,7 @@ resultsUI <- function(id) {
         )
       )
     ),
-    # En resultsUI
-    fluidRow(
-      column(4, 
-        selectizeInput(ns("probe_filter"), "Filtrar por Probe:", 
-                      choices = c("Todos", "Solo entrenamiento (Probe = FALSE)", 
-                                 "Solo pruebas (Probe = TRUE)"),
-                      selected = "Todos")
-      ),
-      column(4,
-        selectizeInput(ns("arena_filter"), "Filtrar por Arena:", 
-                      choices = NULL, # Se actualiza dinámicamente
-                      selected = NULL,
-                      multiple = TRUE)
-      )
-    ),
-    # En resultsUI, añadir info sobre Probe y Arena
-    tags$div(
-      class = "alert alert-info",
-      tags$h4("🔍 Filtros importantes:"),
-      tags$p(HTML("<strong>Probe:</strong> Permite separar fases de entrenamiento (Probe=FALSE) de las fases de prueba (Probe=TRUE).")),
-      tags$p(HTML("<strong>Arena:</strong> Permite filtrar por tipo de arena definida en tu archivo de experimento. 
-                 Útil para separar configuraciones diferentes (ej: plataforma en posición normal vs. reversa).")),
-      tags$p("Estos filtros te ayudarán a analizar específicamente cada fase experimental.")
-    ),
+    
     conditionalPanel(
       condition = paste0("output['", ns("results_available"), "']"),
       
@@ -59,7 +36,6 @@ resultsUI <- function(id) {
         # Tab: Mapas de Densidad
         tabPanel("🗺️ Mapas de Densidad",
           br(),
-          uiOutput(ns("density_filter_status")),
           fluidRow(
             box(
               title = "Configuración de Mapas",
@@ -148,7 +124,6 @@ resultsUI <- function(id) {
         # Tab: Análisis de Estrategias
         tabPanel("🎯 Estrategias de Búsqueda",
           br(),
-          uiOutput(ns("strategy_filter_status")),
           fluidRow(
             box(
               title = "Configuración de Análisis",
@@ -254,7 +229,6 @@ resultsUI <- function(id) {
         # Tab: Datos Procesados
         tabPanel("📊 Datos Procesados",
           br(),
-          uiOutput(ns("data_filter_status")),
           fluidRow(
             box(
               title = "Resumen de Tracks",
@@ -290,7 +264,6 @@ resultsUI <- function(id) {
         # Tab: Resultados Exportados
         tabPanel("📈 Análisis Completo",
           br(),
-          uiOutput(ns("analysis_filter_status")),
           fluidRow(
             box(
               title = "Configuración de Análisis",
@@ -479,207 +452,46 @@ resultsServer <- function(id, values, parent_session = NULL) {
       }
     })
     
-    # En resultsServer - Actualización de opciones de arena
-    observe({
-      req(values$processed_data)
-      
-      # Actualizar opciones de arena - CORREGIR la estructura de datos
-      if (!is.null(values$processed_data$factors) && "_Arena" %in% names(values$processed_data$factors)) {
-        arenas <- unique(values$processed_data$factors$`_Arena`)
-        arenas <- gsub("\\.txt$", "", arenas)  # Eliminar extensión .txt si existe
-        arenas <- arenas[!is.na(arenas) & arenas != ""]  # Eliminar valores vacíos
-        updateSelectizeInput(session, "arena_filter", 
-                            choices = c("Todas" = "", arenas),
-                            selected = "")
-      }
-    })
-    
-    # FUNCIÓN DE FILTRADO GLOBAL MEJORADA
-    filtered_data <- reactive({
-      req(values$processed_data)
-      data <- values$processed_data
-
-      if (is.null(data$factors)) {
-        showNotification("Error: estructura de datos incorrecta", type = "error")
-        return(NULL)
-      }
-
-      # Preservar toda la estructura y luego filtrar
-      result_data <- data
-      filtered_factors <- data$factors
-
-      # Probe: aceptar FALSE o 0 como entrenamiento
-      if (input$probe_filter == "Solo entrenamiento (Probe = FALSE)") {
-        if ("Probe" %in% names(filtered_factors)) {
-          filtered_factors <- filtered_factors[filtered_factors$Probe == FALSE | filtered_factors$Probe == 0, , drop = FALSE]
-        }
-      } else if (input$probe_filter == "Solo pruebas (Probe = TRUE)") {
-        if ("Probe" %in% names(filtered_factors)) {
-          filtered_factors <- filtered_factors[filtered_factors$Probe == TRUE, , drop = FALSE]
-        }
-      }
-
-      # Arena: compatibilidad con/sin .txt
-      if (!is.null(input$arena_filter) && length(input$arena_filter) > 0 && input$arena_filter[1] != "") {
-        if ("_Arena" %in% names(filtered_factors)) {
-          sel <- unique(input$arena_filter)
-          wanted <- unique(c(sel, paste0(sel, ".txt"), sub("\\.txt$", "", sel)))
-          filtered_factors <- filtered_factors[filtered_factors$`_Arena` %in% wanted, , drop = FALSE]
-        }
-      }
-
-      if (nrow(filtered_factors) == 0) {
-        showNotification("No hay datos después del filtrado. Revisa los filtros.", type = "warning")
-        return(NULL)
-      }
-
-      # Track IDs restantes
-      remaining_ids <- unique(filtered_factors$`_TrackID`)
-
-      # Asignar factors filtrados
-      result_data$factors <- filtered_factors
-
-      # Filtrar metrics si existen
-      if (!is.null(result_data$metrics) && "_TrackID" %in% names(result_data$metrics)) {
-        result_data$metrics <- result_data$metrics[result_data$metrics$`_TrackID` %in% remaining_ids, , drop = FALSE]
-      }
-
-      # Filtrar paths si existen
-      if (!is.null(result_data$paths)) {
-        if (is.list(result_data$paths)) {
-          # Si paths tiene nombres
-          if (!is.null(names(result_data$paths))) {
-            result_data$paths <- result_data$paths[names(result_data$paths) %in% remaining_ids]
-          } else {
-            # Intentar extraer _TrackID de cada path
-            valid_paths <- list()
-            for (i in seq_along(result_data$paths)) {
-              p <- result_data$paths[[i]]
-              id <- NULL
-              if (!is.null(p$`_TrackID`)) {
-                id <- p$`_TrackID`
-              } else if (!is.null(attr(p, "_TrackID"))) {
-                id <- attr(p, "_TrackID")
-              }
-              if (!is.null(id) && id %in% remaining_ids) {
-                valid_paths[[length(valid_paths) + 1]] <- p
-              }
-            }
-            result_data$paths <- valid_paths
-          }
-        }
-      }
-
-      # Centralizar los filtros para que otros módulos los usen
-      values$filters <- list(
-        probe = input$probe_filter,
-        arenas = input$arena_filter
-      )
-
-      return(result_data)
-    })
-    
     # Generar mapas de densidad
     observeEvent(input$generate_density_maps, {
-      req(input$density_grouping)
-
+      req(values$processed_data, input$density_grouping, input$density_days)
+      
       tryCatch({
+        # Algunos entornos de Shiny pueden no aceptar 'default'; usar 'message' para máxima compatibilidad
         showNotification("Generando mapas de densidad...", type = "message")
         
-        # Obtener datos filtrados
-        filtered_dataset <- filtered_data()
-        if (is.null(filtered_dataset)) {
-          showNotification("No hay datos disponibles después del filtrado", type = "warning")
-          return()
-        }
-        
-        # Verificar existencia de paths (debug)
-        if (is.null(filtered_dataset$paths)) {
-          showNotification("No se encontraron paths en los datos filtrados", type = "error")
-          return()
-        }
-        
-        # Verificar si paths está vacío (debug)
-        if (is.list(filtered_dataset$paths) && length(filtered_dataset$paths) == 0) {
-          showNotification("La lista de paths está vacía", type = "error")
-          return()
-        }
-        
-        # Imprimir información para debug
-        cat("Paths encontrados:", length(filtered_dataset$paths), "\n")
-        cat("Estructura de paths:", class(filtered_dataset$paths), "\n")
-        if (is.list(filtered_dataset$paths)) {
-          cat("Nombres de paths:", head(names(filtered_dataset$paths)), "\n")
-        }
-        
-        # Intentar generar los mapas
-        plots_result <- create_density_maps(
-          experiment_data = filtered_dataset,
+        # Crear mapas de densidad agrupados
+        plots <- create_density_maps(
+          experiment_data = values$processed_data,
           grouping_var = input$density_grouping,
+          days_filter = input$density_days,
+          arena_filter = input$density_arenas,
           color_palette = input$color_palette,
           resolution = input$resolution,
           color_levels = input$color_levels,
-          show_legend = input$show_legend,
-          overlay_goals = FALSE  # No dibujar old.goal
+          show_legend = input$show_legend
         )
         
-        # Verificar resultado
-        if (is.null(plots_result)) {
-          showNotification("Error: resultado NULL en create_density_maps", type = "error")
-          return()
-        } else if (is.character(plots_result)) {
-          showNotification(paste("Error:", plots_result), type = "error")
-          return()
-        }
+        density_maps(plots)
+        values$density_plots <- plots
         
-        # Todo bien, actualizar los mapas
-        density_maps(plots_result)
-        values$density_plots <- plots_result
+  showNotification("Mapas de densidad generados correctamente", type = "message")
         
-        showNotification("Mapas de densidad generados correctamente", type = "message")
       }, error = function(e) {
         showNotification(paste("Error generando mapas:", e$message), type = "error")
-        print(paste("Debug - Error completo:", as.character(e)))
       })
     })    # Generar análisis de estrategias
     observeEvent(input$generate_strategy_analysis, {
-      req(values$strategies, values$processed_data, input$strategy_grouping, input$strategy_days)
-      
+      req(values$strategies, input$strategy_grouping, input$strategy_days)
       tryCatch({
         showNotification("Generando análisis de estrategias...", type = "message")
-        
-        # Verificar datos filtrados
-        filtered_dataset <- filtered_data()
-        if (is.null(filtered_dataset)) {
-          showNotification("No hay datos disponibles después del filtrado", type = "warning")
-          return()
-        }
-        
-        # Filtrar estrategias basado en los Track_IDs que quedaron
-        remaining_track_ids <- unique(filtered_dataset$factors$`_TrackID`)
-        filtered_strategies <- values$strategies
-        
-        # Verificar que las estrategias tienen la estructura correcta
-        if (!is.null(filtered_strategies$calls)) {
-          available_tracks <- rownames(filtered_strategies$calls)
-          valid_tracks <- intersect(remaining_track_ids, available_tracks)
-          
-          if (length(valid_tracks) == 0) {
-            showNotification("No hay estrategias disponibles para los datos filtrados", type = "warning")
-            return()
-          }
-          
-          filtered_strategies$calls <- filtered_strategies$calls[valid_tracks, , drop = FALSE]
-        }
-        
         results <- create_strategy_analysis(
-          strategies_data = filtered_strategies,
-          experiment_data = filtered_dataset,
+          strategies_data = values$strategies,
+          experiment_data = values$processed_data,
           grouping_var = input$strategy_grouping,
           days_filter = input$strategy_days,
           show_individual = input$show_individual_strategies
         )
-        
         strategy_plots(results$plots)
         statistical_results(results$stats)
         values$strategy_plots <- results$plots
@@ -687,7 +499,6 @@ resultsServer <- function(id, values, parent_session = NULL) {
         showNotification("Análisis de estrategias generado correctamente", type = "message")
       }, error = function(e) {
         showNotification(paste("Error generando análisis:", e$message), type = "error")
-        print(paste("Debug - Error en estrategias:", e))  # Para debugging
       })
     })
     
@@ -696,27 +507,24 @@ resultsServer <- function(id, values, parent_session = NULL) {
       req(values$analysis_config, input$analysis_variable, input$analysis_grouping)
       
       tryCatch({
-        showNotification("Generando análisis completo...", type = "message")
+  showNotification("Generando análisis completo...", type = "message")
         
-        # Usar los datos exportados filtrados
-        filtered_results <- filtered_data()
-        
-        if (!is.null(filtered_results)) {
+        # Usar los datos exportados completos
+        if (!is.null(values$analysis_config$results_export)) {
           plot_obj <- create_comprehensive_analysis(
-            results_data = filtered_results,
+            results_data = values$analysis_config$results_export,
             variable = input$analysis_variable,
             grouping_var = input$analysis_grouping,
             days_filter = input$analysis_days,
-            probe_filter = input$probe_filter,
-            arena_filter = input$arena_filter,
             show_error_bars = input$show_error_bars,
             log_transform = input$log_transform
           )
           
           analysis_plots(plot_obj)
+          
           showNotification("Análisis completo generado correctamente", type = "message")
         } else {
-          showNotification("No hay datos después del filtrado", type = "warning")
+          showNotification("No hay datos exportados disponibles", type = "warning")
         }
         
       }, error = function(e) {
@@ -729,28 +537,12 @@ resultsServer <- function(id, values, parent_session = NULL) {
       req(values$analysis_config, input$analysis_variable, input$analysis_grouping, input$stat_test)
       
       tryCatch({
-        showNotification("Ejecutando análisis estadístico...", type = "message")
+  showNotification("Ejecutando análisis estadístico...", type = "message")
         
         if (!is.null(values$analysis_config$results_export)) {
-          # Aplicar filtros de Probe y Arena a los datos de estadística
+          # Filtrar datos si es necesario
           data_for_stats <- values$analysis_config$results_export
           
-          # CAMBIO: Filtrar por Probe como en filtered_data()
-          if (input$probe_filter == "Solo entrenamiento (Probe = FALSE)") {
-            data_for_stats <- data_for_stats[data_for_stats$Probe == FALSE, ]
-          } else if (input$probe_filter == "Solo pruebas (Probe = TRUE)") {
-            data_for_stats <- data_for_stats[data_for_stats$Probe == TRUE, ]
-          }
-          
-          # CAMBIO: Filtrar por Arena como en filtered_data()
-          if (!is.null(input$arena_filter) && length(input$arena_filter) > 0 && input$arena_filter[1] != "") {
-            selected_arenas <- input$arena_filter
-            # Mejor método para filtrar por arena: usar %in% en vez de grepl
-            data_for_stats <- data_for_stats[data_for_stats$`_Arena` %in% 
-                                      paste0(selected_arenas, ifelse(grepl("\\.txt$", selected_arenas), "", ".txt")), ]
-          }
-          
-          # Filtrar por días (ya estaba implementado)
           if (!is.null(input$analysis_days)) {
             day_col <- names(data_for_stats)[grepl("^_Day", names(data_for_stats))][1]
             if (!is.null(day_col)) {
@@ -758,14 +550,12 @@ resultsServer <- function(id, values, parent_session = NULL) {
             }
           }
           
-          # CAMBIO: Añadir los filtros a la función de análisis estadístico
+          # Ejecutar análisis estadístico
           stats_result <- perform_statistical_analysis(
             data = data_for_stats,
             variable = input$analysis_variable,
             grouping_var = input$analysis_grouping,
-            test_type = input$stat_test,
-            probe_filter = input$probe_filter,     # NUEVO: pasar filtro de probe
-            arena_filter = input$arena_filter      # NUEVO: pasar filtro de arena
+            test_type = input$stat_test
           )
           
           stats_results(stats_result)
@@ -774,6 +564,7 @@ resultsServer <- function(id, values, parent_session = NULL) {
         } else {
           showNotification("No hay datos exportados disponibles", type = "warning")
         }
+        
       }, error = function(e) {
         showNotification(paste("Error en análisis estadístico:", e$message), type = "error")
       })
@@ -921,55 +712,5 @@ resultsServer <- function(id, values, parent_session = NULL) {
           DT::formatRound(columns = which(sapply(values$analysis_config$results_export, is.numeric)), digits = 3)
       }
     })
-    
-    # Reemplazar el único output$filter_status con cuatro outputs diferentes:
-    
-    # Para mapas de densidad
-    output$density_filter_status <- renderUI({
-      create_filter_status_ui(input$probe_filter, input$arena_filter)
-    })
-    
-    # Para estrategias de búsqueda
-    output$strategy_filter_status <- renderUI({
-      create_filter_status_ui(input$probe_filter, input$arena_filter)
-    })
-    
-    # Para datos procesados
-    output$data_filter_status <- renderUI({
-      create_filter_status_ui(input$probe_filter, input$arena_filter)
-    })
-    
-    # Para análisis completo
-    output$analysis_filter_status <- renderUI({
-      create_filter_status_ui(input$probe_filter, input$arena_filter)
-    })
-    
-    # Función auxiliar para crear el UI de estado de filtros
-    create_filter_status_ui <- function(probe_filter, arena_filter) {
-      filter_text <- NULL
-      
-      if (!is.null(probe_filter) && probe_filter != "Todos") {
-        filter_text <- c(filter_text, paste("Probe:", probe_filter))
-      }
-      
-      if (!is.null(arena_filter) && length(arena_filter) > 0 && arena_filter[1] != "") {
-        filter_text <- c(filter_text, paste("Arenas:", paste(arena_filter, collapse=", ")))
-      }
-      
-      if (length(filter_text) > 0) {
-        tags$div(
-          class = "alert alert-success",
-          icon("filter"), 
-          "Filtros activos: ", 
-          paste(filter_text, collapse="; ")
-        )
-      } else {
-        tags$div(
-          class = "alert alert-info",
-          icon("info-circle"),
-          "No hay filtros activos. Mostrando todos los datos."
-        )
-      }
-    }
   })
 }

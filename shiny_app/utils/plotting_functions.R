@@ -3,173 +3,165 @@
 
 # Función para crear mapas de densidad agrupados
 create_density_maps <- function(experiment_data, grouping_var, days_filter = NULL,
-                               arena_filter = NULL, color_palette = "viridis",
-                               resolution = 900, color_levels = 300,
-                               show_legend = FALSE, overlay_goals = FALSE) {
-
-  # Verificaciones iniciales
-  if (is.null(experiment_data) || is.null(experiment_data$factors)) {
-    return("No hay datos disponibles para generar mapas")
+                               color_palette = "viridis", resolution = 900,
+                               color_levels = 300, show_legend = FALSE, arena_filter = NULL) {
+  
+  # Filtrar datos por días y arena si se especifica
+  filter_mask <- rep(TRUE, length(experiment_data$metrics))
+  
+  if (!is.null(days_filter)) {
+    day_col <- names(experiment_data$factors)[grepl("^_Day", names(experiment_data$factors))][1]
+    if (!is.null(day_col)) {
+      filter_mask <- filter_mask & (experiment_data$factors[[day_col]] %in% days_filter)
+    }
   }
   
-  if (!grouping_var %in% names(experiment_data$factors)) {
-    return(paste("Variable de agrupación", grouping_var, "no encontrada"))
+  if (!is.null(arena_filter)) {
+    arena_col <- names(experiment_data$factors)[grepl("^_Arena", names(experiment_data$factors))][1]
+    if (!is.null(arena_col)) {
+      filter_mask <- filter_mask & (experiment_data$factors[[arena_col]] %in% arena_filter)
+    }
   }
   
-  if (nrow(experiment_data$factors) == 0) {
-    return("No hay suficientes datos después del filtrado")
+  metrics_filtered <- experiment_data$metrics[filter_mask]
+  factors_filtered <- experiment_data$factors[filter_mask, ]
+  
+  # Verificar que tenemos datos
+  if (length(metrics_filtered) == 0) {
+    stop("No hay datos después del filtrado")
   }
   
-  # Verificar paths - validación robusta
-  if (is.null(experiment_data$paths)) {
-    return("No hay datos de trayectorias disponibles")
-  }
-  
-  if (is.list(experiment_data$paths) && length(experiment_data$paths) == 0) {
-    return("Lista de trayectorias vacía")
-  }
-
   # Obtener grupos únicos
-  groups <- unique(experiment_data$factors[[grouping_var]])
-  groups <- groups[!is.na(groups)]
+  if (grouping_var %in% names(factors_filtered)) {
+    groups <- unique(factors_filtered[[grouping_var]])
+    groups <- groups[!is.na(groups)]
+  } else {
+    stop(paste("Variable de agrupación", grouping_var, "no encontrada"))
+  }
   
-  if (length(groups) == 0) {
-    return("No hay grupos válidos para la variable seleccionada")
-  }
-
-  # Crear función de ploteo
-  plot_function <- function() {
-    # Guardar parámetros gráficos actuales
-    old_par <- par(no.readonly = TRUE)
-    on.exit(par(old_par))
-    
-    # Configuración de subplots
+  # Configurar paleta de colores
+  color_func <- switch(color_palette,
+    "viridis" = viridis::viridis,
+    "plasma" = viridis::plasma,
+    "inferno" = viridis::inferno,
+    "magma" = viridis::magma,
+    "cividis" = viridis::cividis,
+    viridis::viridis
+  )
+  
+  # Crear función que genere todos los plots
+  combined_plot <- function() {
+    # Determinar layout
     n_groups <- length(groups)
-    if (n_groups <= 2) {
-      par(mfrow = c(1, n_groups))
-    } else if (n_groups <= 4) {
-      par(mfrow = c(2, 2))
+    if (n_groups > 1) {
+      n_cols <- min(3, ceiling(sqrt(n_groups)))
+      n_rows <- ceiling(n_groups / n_cols)
+      par(mfrow = c(n_rows, n_cols), mar = c(4, 4, 3, 2))
     } else {
-      par(mfrow = c(ceiling(n_groups/2), 2))
+      par(mfrow = c(1, 1), mar = c(5, 4, 4, 2))
     }
-    par(mar = c(4, 4, 2, 1))
-
+    
+    plots_created <- 0
+    
     for (group in groups) {
-      # Obtener IDs de tracks para este grupo
-      group_tracks <- experiment_data$factors$`_TrackID`[
-        experiment_data$factors[[grouping_var]] == group
-      ]
+      group_mask <- factors_filtered[[grouping_var]] == group
+      group_metrics <- metrics_filtered[group_mask]
       
-      if (length(group_tracks) == 0) {
-        plot.new()
-        title(paste("Grupo:", group, "(sin datos)"))
-        next
-      }
-
-      # Extraer paths para estos tracks
-      if (is.list(experiment_data$paths)) {
-        # Si paths tiene nombres, usar nombres
-        if (!is.null(names(experiment_data$paths))) {
-          group_paths <- experiment_data$paths[names(experiment_data$paths) %in% group_tracks]
-        } else {
-          # Intentar extraer _TrackID de cada path
-          group_paths <- list()
-          for (i in seq_along(experiment_data$paths)) {
-            p <- experiment_data$paths[[i]]
-            id <- NULL
-            if (!is.null(p$`_TrackID`)) {
-              id <- p$`_TrackID`
-            } else if (!is.null(attr(p, "_TrackID"))) {
-              id <- attr(p, "_TrackID")
-            }
-            if (!is.null(id) && id %in% group_tracks) {
-              group_paths[[length(group_paths) + 1]] <- p
-            }
+      if (length(group_metrics) > 0) {
+        tryCatch({
+          # Verificar si hay múltiples arenas en este grupo
+          group_arenas <- unique(factors_filtered[group_mask, ]$`_Arena`)
+          
+          if (length(group_arenas) > 1) {
+            # Advertir sobre múltiples arenas pero continuar
+            title_text <- paste(grouping_var, ":", group, "(múltiples arenas)")
+          } else {
+            title_text <- paste(grouping_var, ":", group)
           }
-        }
+          
+          # Crear plot de densidad
+          Rtrack::plot_density(
+            group_metrics,
+            title = title_text,
+            col = color_func(color_levels),
+            resolution = resolution,
+            feature.col = "#E87FB0",
+            feature.lwd = 4,
+            legend = show_legend
+          )
+          
+          plots_created <- plots_created + 1
+          
+        }, error = function(e) {
+          # Crear un plot vacío con mensaje de error
+          plot.new()
+          text(0.5, 0.5, paste("Error:", e$message), cex = 0.8, col = "red")
+          title(paste("Error -", grouping_var, ":", group))
+        })
       } else {
-        # Si paths no es una lista, probablemente sea un error
+        # Crear un plot vacío si no hay datos
         plot.new()
-        title(paste("Grupo:", group, "(estructura de paths inválida)"))
-        next
+        text(0.5, 0.5, "Sin datos", cex = 1, col = "gray")
+        title(paste(grouping_var, ":", group, "- Sin datos"))
       }
-
-      if (length(group_paths) == 0) {
-        plot.new()
-        title(paste("Grupo:", group, "(sin trayectorias)"))
-        next
-      }
-
-      # Extraer coordenadas X,Y de todos los paths
-      all_x <- all_y <- numeric(0)
-      for (path in group_paths) {
-        if (!is.null(path$x) && !is.null(path$y)) {
-          all_x <- c(all_x, path$x)
-          all_y <- c(all_y, path$y)
-        }
-      }
-
-      # Eliminar NAs
-      valid_points <- !is.na(all_x) & !is.na(all_y)
-      all_x <- all_x[valid_points]
-      all_y <- all_y[valid_points]
-
-      if (length(all_x) == 0) {
-        plot.new()
-        title(paste("Grupo:", group, "(sin coordenadas válidas)"))
-        next
-      }
-
-      # Generar mapa de densidad con manejo de errores
-      tryCatch({
-        # Cargar librería en modo silencioso
-        suppressWarnings(library(MASS))
-        
-        # Calcular densidad kernel (kde2d)
-        n_points <- max(30, min(resolution/10, 512))
-        dens <- suppressWarnings(
-          MASS::kde2d(all_x, all_y, n = n_points)
-        )
-        
-        # Dibujar mapa de densidad
-        image(dens, col = hcl.colors(color_levels, color_palette), 
-              main = paste("Densidad -", group),
-              xlab = "X", ylab = "Y")
-        
-        # Añadir contornos
-        contour(dens, add = TRUE, col = "white", lwd = 0.5)
-        
-      }, error = function(e) {
-        # Fallback: dibujar las trayectorias como puntos
-        plot(all_x, all_y, pch = 16, cex = 0.3, col = rgb(0, 0, 1, 0.3),
-             main = paste("Trayectorias -", group),
-             xlab = "X", ylab = "Y")
-      })
+    }
+    
+    # Resetear layout
+    par(mfrow = c(1, 1), mar = c(5, 4, 4, 2))
+    
+    if (plots_created == 0) {
+      stop("No se pudieron crear mapas de densidad")
     }
   }
-
-  return(plot_function)
+  
+  return(combined_plot)
 }
 
 # Función para crear análisis de estrategias
-create_strategy_analysis <- function(data, grouping_var, days_filter = NULL, 
-                                   probe_filter = NULL, arena_filter = NULL) {
+create_strategy_analysis <- function(strategies_data, experiment_data, grouping_var,
+                                   days_filter = NULL, show_individual = FALSE) {
   
-  # Aplicar filtros
-  if (!is.null(probe_filter) && probe_filter != "Todos") {
-    probe_value <- probe_filter == "Solo pruebas (Probe = TRUE)"
-    data <- data[data$Probe == probe_value, ]
+  # Combinar datos
+  factors_df <- experiment_data$factors
+  strategies_df <- strategies_data$calls
+  
+  # Merge datos
+  if ("_TrackID" %in% names(factors_df)) {
+    if (!"Track_ID" %in% names(strategies_df)) {
+      strategies_df$Track_ID <- rownames(strategies_df)
+    }
+    merged_data <- merge(factors_df, strategies_df, 
+                        by.x = "_TrackID", by.y = "Track_ID", all = TRUE)
+  } else {
+    merged_data <- cbind(factors_df, strategies_df)
   }
   
-  if (!is.null(arena_filter) && length(arena_filter) > 0 && arena_filter[1] != "") {
-    selected_arenas <- arena_filter
-    selected_arenas_pattern <- paste0(paste0(selected_arenas, 
-                                           ifelse(grepl("\\.txt$", selected_arenas), "", ".txt")),
-                                     collapse = "|")
-    data <- data[grepl(selected_arenas_pattern, data$`_Arena`), ]
+  # Filtrar por días
+  if (!is.null(days_filter)) {
+    day_col <- names(merged_data)[grepl("^_Day", names(merged_data))][1]
+    if (!is.null(day_col)) {
+      merged_data <- merged_data[merged_data[[day_col]] %in% days_filter, ]
+    }
   }
   
-  # Continuar con el procesamiento...
+  # Clasificar estrategias
+  merged_data <- classify_strategies_for_plot(merged_data)
+  
+  # Crear gráfico de estrategias
+  if (show_individual) {
+    plot_obj <- create_individual_strategy_plot(merged_data, grouping_var)
+  } else {
+    plot_obj <- create_grouped_strategy_plot(merged_data, grouping_var)
+  }
+  
+  # Análisis estadístico básico
+  stats_results <- perform_strategy_statistics(merged_data, grouping_var)
+  
+  return(list(
+    plots = plot_obj,
+    stats = stats_results,
+    data = merged_data
+  ))
 }
 
 # Función para clasificar estrategias para plotting

@@ -68,8 +68,6 @@ analysisUI <- function(id) {
           tags$li(tags$b("Día:"), " variable temporal (p.ej., _Day) para análisis longitudinal.")
         ),
         
-        # Este panel ya no necesita mostrar el estado de los filtros globales
-        # porque este módulo ya no los aplica.
         conditionalPanel(
           condition = paste0("output['", ns("experiment_ready"), "']"),
           
@@ -240,10 +238,10 @@ analysisServer <- function(id, values, parent_session = NULL) {
       
       updateSelectInput(session, "day_variable",
                        choices = system_choices,
-                       selected = if ("_Day" %in% system_choices) "_Day" else NULL)
+                       selected = "_Day")
     })
     
-    # Iniciar análisis - ESTE ES EL ÚNICO BLOQUE QUE EJECUTA EL ANÁLISIS
+    # Iniciar análisis
     observeEvent(input$start_analysis, {
       req(values$experiment_data, values$arena_config, values$track_files_data)
       
@@ -297,16 +295,16 @@ analysisServer <- function(id, values, parent_session = NULL) {
           }
           file.copy(src, file.path(temp_dir, fname), overwrite = TRUE)
         }
-        add_to_log(paste("Arenas listas:", paste(unique(arenas_required_files), collapse = ", ")))        
+        add_to_log(paste("Arenas listas:", paste(arenas_required_files, collapse = ", ")))        
         
         add_to_log("Procesando tracks con Rtrack...")
         
         # Llamar a la función de procesamiento con mejor manejo de errores
         experiment_result <- tryCatch({
-          Rtrack::read_experiment(
-            file = temp_exp_file,
-            data.dir = values$track_files_data$directory,
-            project.dir = temp_dir,
+          process_mwm_experiment(
+            experiment_file = temp_exp_file,
+            data_dir = values$track_files_data$directory,
+            project_dir = temp_dir,
             threads = threads
           )
         }, error = function(e) {
@@ -314,9 +312,19 @@ analysisServer <- function(id, values, parent_session = NULL) {
           error_msg <- e$message
           
           if (grepl("argument is of length zero", error_msg)) {
-            error_msg <- paste("Error de datos vacíos. Posibles causas:\n- Archivos de tracks vacíos\n- Nombres de archivos no coinciden con el experimento\n- Formato de datos incorrecto")
+            error_msg <- paste("Error de datos vacíos. Posibles causas:",
+                              "- Archivos de tracks vacíos",
+                              "- Nombres de archivos no coinciden con el experimento",
+                              "- Formato de datos incorrecto",
+                              "- Datos faltantes en archivos de tracks", sep = "\n")
           } else if (grepl("cannot open file", error_msg)) {
-            error_msg <- paste("Error al acceder a archivos:\n- Verificar que todos los archivos de tracks estén cargados\n- Comprobar que los nombres coincidan exactamente")
+            error_msg <- paste("Error al acceder a archivos:",
+                              "- Verificar que todos los archivos de tracks estén cargados",
+                              "- Comprobar que los nombres coincidan exactamente", sep = "\n")
+          } else if (grepl("Archivos de tracks faltantes", error_msg)) {
+            error_msg <- paste("Algunos archivos de tracks no están disponibles:",
+                              "- La aplicación continuará con los archivos disponibles",
+                              "- Si deseas usar todos los tracks, carga los archivos faltantes", sep = "\n")
           }
           
           stop(error_msg)
@@ -330,21 +338,21 @@ analysisServer <- function(id, values, parent_session = NULL) {
         # Aplicar umbral si está activado
         if (input$threshold_strategies) {
           add_to_log(paste("Aplicando umbral de confianza:", input$confidence_threshold))
-          strategies <- Rtrack::threshold_strategies(strategies, threshold = input$confidence_threshold)
+          strategies <- Rtrack::threshold_strategies(strategies, input$confidence_threshold)
         }
         
         add_to_log("Procesando datos para análisis estadístico...")
         
-        # Procesar datos para análisis (exportación)
-        # NOTA: Esta función es de Rtrack y prepara un data.frame para exportar.
-        # No es un filtro, sino una preparación de datos.
-        processed_data <- Rtrack::get_results(
-          experiment = experiment_result,
-          strategies = strategies,
-          add_factors = input$grouping_variables
+        # Procesar datos para análisis
+        processed_data <- process_strategy_data(
+          experiment_result,
+          strategies,
+          grouping_vars = input$grouping_variables,
+          treatment_var = input$treatment_variable,
+          day_var = input$day_variable
         )
         
-        # Guardar resultados en el reactiveVal local
+        # Guardar resultados
         results_data(list(
           experiment = experiment_result,
           strategies = strategies,
@@ -358,16 +366,16 @@ analysisServer <- function(id, values, parent_session = NULL) {
           )
         ))
         
-        # Pasar resultados a values globales para que otros módulos los usen
+        # Pasar resultados a values globales
         values$processed_data <- experiment_result
         values$strategies <- strategies
-        values$analysis_config <- list(results_export = processed_data) # Guardar el data.frame exportado
+        values$analysis_config <- processed_data
         values$processing_complete <- TRUE
         
         add_to_log("✅ Análisis completado exitosamente!")
         analysis_complete(TRUE)
         
-        showNotification("Análisis completado correctamente", type = "message", duration = 5)
+  showNotification("Análisis completado correctamente", type = "message", duration = 5)
         
       }, error = function(e) {
         add_to_log(paste("❌ Error:", e$message))
@@ -400,32 +408,45 @@ analysisServer <- function(id, values, parent_session = NULL) {
     
     # Resúmenes de resultados
     output$total_tracks <- renderText({
-      req(results_data())
-      length(results_data()$experiment$metrics)
+      if (!is.null(results_data())) {
+        length(results_data()$experiment$metrics)
+      } else {
+        "0"
+      }
     })
     
     output$total_subjects <- renderText({
-      req(results_data())
-      length(unique(results_data()$experiment$factors$`_TargetID`))
+      if (!is.null(results_data())) {
+        length(unique(results_data()$experiment$factors$`_TargetID`))
+      } else {
+        "0"
+      }
     })
     
     output$total_days <- renderText({
-      req(results_data())
-      length(unique(results_data()$experiment$factors$`_Day`))
+      if (!is.null(results_data())) {
+        length(unique(results_data()$experiment$factors$`_Day`))
+      } else {
+        "0"
+      }
     })
     
     output$strategy_accuracy <- renderText({
-      req(results_data())
-      avg_confidence <- mean(results_data()$strategies$calls$confidence, na.rm = TRUE)
-      paste0(round(avg_confidence * 100, 1), "%")
+      if (!is.null(results_data())) {
+        avg_confidence <- mean(results_data()$strategies$calls$confidence, na.rm = TRUE)
+        paste0(round(avg_confidence * 100, 1), "%")
+      } else {
+        "0%"
+      }
     })
     
     # Botón para ver resultados
     observeEvent(input$view_results, {
-      updateTabItems(parent_session, "tabs", "results")
+      if (!is.null(parent_session)) {
+        shinydashboard::updateTabItems(parent_session, "tabs", "results")
+      } else {
+        shinydashboard::updateTabItems(session$parent, "tabs", "results")
+      }
     })
-
-    # SE HAN ELIMINADO LOS BLOQUES DUPLICADOS Y LA LÓGICA DE FILTRADO INCORRECTA
-    
   })
 }

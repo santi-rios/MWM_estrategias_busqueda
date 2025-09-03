@@ -24,10 +24,10 @@ analysisUI <- function(id) {
             conditionalPanel(
               condition = paste0("input['", ns("parallel_processing"), "']"),
               numericInput(ns("num_threads"),
-                          "Número de hilos (0 = automático):",
-                          value = 0,
-                          min = 0,
-                          max = 8,
+                          "Número de hilos:",
+                          value = 1,
+                          min = 1,
+                          max = 1,
                           step = 1)
             )
           )
